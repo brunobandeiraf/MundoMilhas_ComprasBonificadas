@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  name              String?
+  phone             String?
+  passwordHash      String?
+  role              String    @default("client") // "admin" | "client"
+  isActive          Boolean   @default(false)
+  activationToken   String?
+  tokenExpiresAt    DateTime?
+  tokenResendCount  Int       @default(0)
+  tokenResendResetAt DateTime?
+  loginAttempts     Int       @default(0)
+  loginBlockedUntil DateTime?
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model LoyaltyProgram {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  url       String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  scores    BonusScore[]
+}
+
+model Store {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  scores    BonusScore[]
+}
+
+model BonusScore {
+  id        String         @id @default(uuid())
+  score     Int
+  store     Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeId   String
+  program   LoyaltyProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  programId String
+  collectedAt DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([storeId, programId])
+}
+
+model CrawlLog {
+  id          String   @id @default(uuid())
+  programId   String
+  programName String
+  status      String   // "success" | "error"
+  storesFound Int      @default(0)
+  errorMessage String?
+  startedAt   DateTime
+  completedAt DateTime @default(now())
+}
