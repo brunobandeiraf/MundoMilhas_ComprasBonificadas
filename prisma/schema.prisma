@@ -33,27 +33,52 @@ model LoyaltyProgram {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   scores    BonusScore[]
+  history   ScoreHistory[]
 }
 
 model Store {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  scores    BonusScore[]
+  id          String   @id @default(uuid())
+  name        String   @unique
+  imageUrl    String?
+  category    String?
+  description String?
+  link        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  scores      BonusScore[]
+  history     ScoreHistory[]
 }
 
+// Current score (latest value, one per store+program)
 model BonusScore {
+  id          String         @id @default(uuid())
+  score       Int
+  description String?
+  rule        String?
+  deadline    String?
+  link        String?
+  store       Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeId     String
+  program     LoyaltyProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  programId   String
+  collectedAt DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  detailsFetchedAt DateTime?
+
+  @@unique([storeId, programId])
+}
+
+// Historical scores (one entry per day per store+program)
+model ScoreHistory {
   id        String         @id @default(uuid())
   score     Int
+  date      String         // "YYYY-MM-DD" format, one entry per day
   store     Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
   storeId   String
   program   LoyaltyProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
   programId String
-  collectedAt DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
 
-  @@unique([storeId, programId])
+  @@unique([storeId, programId, date])
 }
 
 model CrawlLog {
@@ -65,4 +90,10 @@ model CrawlLog {
   errorMessage String?
   startedAt   DateTime
   completedAt DateTime @default(now())
+}
+
+model SystemConfig {
+  id    String @id @default("singleton")
+  key   String @unique
+  value String
 }

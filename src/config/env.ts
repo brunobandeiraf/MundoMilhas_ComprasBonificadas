@@ -8,7 +8,8 @@ const envSchema = z.object({
   SMTP_PORT: z.coerce.number().int().positive(),
   SMTP_USER: z.string().min(1),
   SMTP_PASS: z.string().min(1),
-  CRON_SCHEDULE: z.string().default('0 10,17 * * *'),
+  CRON_SCHEDULE: z.string().default('0 12 * * *'),
+  APP_URL: z.string().default('http://localhost:5173'),
 })
 
 export type Env = z.infer<typeof envSchema>
