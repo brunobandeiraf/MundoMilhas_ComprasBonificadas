@@ -17,8 +17,16 @@ router.post('/programs', AdminController.createProgram)
 router.patch('/programs/:programId', AdminController.updateProgram)
 router.post('/crawler/run', AdminController.runCrawler)
 router.post('/crawler/run/:programId', AdminController.runCrawlerForProgram)
+router.get('/crawler/status', AdminController.getCrawlerStatus)
 router.get('/crawler/schedule', AdminController.getCrawlerSchedule)
 router.put('/crawler/schedule', AdminController.updateCrawlerSchedule)
 router.get('/crawler/history', AdminController.getCrawlerHistory)
+
+// Store management
+router.get('/stores', AdminController.listAllStores)
+router.patch('/stores/:storeId/category', AdminController.updateStoreCategory)
+router.post('/stores/merge', AdminController.mergeStores)
+router.get('/stores/aliases', AdminController.listAliases)
+router.delete('/stores/aliases/:aliasId', AdminController.removeAlias)
 
 export default router

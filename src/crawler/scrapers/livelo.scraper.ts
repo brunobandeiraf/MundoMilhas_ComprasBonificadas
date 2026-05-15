@@ -76,7 +76,19 @@ export class LiveloScraper implements BaseScraper {
       // Extract all stores from the page
       const results = await this.extractStores(page)
 
-      console.log(`[LiveloScraper] ${results.length} lojas encontradas. Buscando detalhes...`)
+      console.log(`[LiveloScraper] ${results.length} lojas encontradas.`)
+
+      // Only fetch categories on first run (when no stores have categories yet)
+      const { db } = await import('../../config/database.js')
+      const storesWithCategory = await db.store.count({ where: { category: { not: null } } })
+      if (storesWithCategory === 0) {
+        console.log('[LiveloScraper] Primeira execução — buscando categorias...')
+        await this.assignCategories(page, results)
+      } else {
+        console.log(`[LiveloScraper] Categorias já mapeadas (${storesWithCategory} lojas). Pulando.`)
+      }
+
+      console.log(`[LiveloScraper] Buscando detalhes...`)
 
       // Fetch details for each store that has a link
       let detailsCount = 0
@@ -376,6 +388,114 @@ export class LiveloScraper implements BaseScraper {
     })
 
     return results
+  }
+
+  /**
+   * Assign categories to stores by clicking category filters on the page.
+   */
+  private async assignCategories(page: Page, results: ScraperResult[]): Promise<void> {
+    try {
+      // Go back to the main page
+      await page.goto(this.url, { waitUntil: 'networkidle2', timeout: 30_000 })
+      await new Promise((r) => setTimeout(r, 3000))
+
+      // Find category filter buttons/tabs
+      const categoryNames = await page.evaluate(() => {
+        const cats: string[] = []
+        // Look for filter elements (tabs, buttons, links with category names)
+        const filterEls = document.querySelectorAll(
+          '[role="tab"], [data-testid*="filter"], [data-testid*="category"], button, a'
+        )
+        for (const el of filterEls) {
+          const text = (el.textContent || '').trim()
+          // Category names are short, don't contain numbers, and aren't navigation items
+          if (text.length >= 3 && text.length <= 30 &&
+              !text.includes('pont') && !text.includes('Login') &&
+              !text.includes('Criar') && !text.includes('Central') &&
+              !text.includes('Trocar') && !text.includes('Juntar') &&
+              text !== 'Todos' && text !== 'Ver mais') {
+            // Check if it looks like a category (capitalized, no special chars)
+            if (/^[A-ZÀ-Ú]/.test(text) && !cats.includes(text)) {
+              cats.push(text)
+            }
+          }
+        }
+        return cats
+      })
+
+      // Filter to likely categories (from the page context)
+      const likelyCategories = categoryNames.filter(name =>
+        ['Moda', 'Eletrônicos', 'Viagens', 'Beleza', 'Casa', 'Esporte', 'Saúde',
+         'Alimentação', 'Entretenimento', 'Serviços', 'Educação', 'Tecnologia',
+         'Ofertas', 'Clube', 'Novidades', 'Shopping', 'Supermercado', 'Pet',
+         'Infantil', 'Automotivo', 'Livros', 'Games'].some(cat =>
+          name.toLowerCase().includes(cat.toLowerCase())
+        )
+      )
+
+      if (likelyCategories.length === 0) {
+        console.log('[LiveloScraper] Nenhuma categoria identificada nos filtros.')
+        return
+      }
+
+      console.log(`[LiveloScraper] Categorias encontradas: ${likelyCategories.join(', ')}`)
+
+      // For each category, click the filter and see which stores appear
+      for (const categoryName of likelyCategories) {
+        try {
+          // Click the category filter
+          await page.evaluate((catName) => {
+            const elements = document.querySelectorAll('[role="tab"], button, a')
+            for (const el of elements) {
+              if ((el.textContent || '').trim() === catName) {
+                (el as HTMLElement).click()
+                return
+              }
+            }
+          }, categoryName)
+
+          await new Promise((r) => setTimeout(r, 2000))
+
+          // Get store names visible after filtering
+          const visibleStores = await page.evaluate(() => {
+            const names: string[] = []
+            const imgs = document.querySelectorAll('[data-testid="img_PartnerCard_partnerImage"]')
+            for (const img of imgs) {
+              let name = (img.getAttribute('alt') || '').trim()
+              if (name.toLowerCase().startsWith('logo ')) name = name.slice(5).trim()
+              if (name) names.push(name.toLowerCase())
+            }
+            return names
+          })
+
+          // Assign category to matching stores
+          for (const store of results) {
+            if (visibleStores.includes(store.storeName.toLowerCase())) {
+              if (!store.category) {
+                store.category = categoryName
+              }
+            }
+          }
+        } catch {
+          // Skip this category if clicking fails
+        }
+      }
+
+      // Click "Todos" to reset
+      try {
+        await page.evaluate(() => {
+          const elements = document.querySelectorAll('[role="tab"], button, a')
+          for (const el of elements) {
+            if ((el.textContent || '').trim() === 'Todos') {
+              (el as HTMLElement).click()
+              return
+            }
+          }
+        })
+      } catch {}
+    } catch (error) {
+      console.warn('[LiveloScraper] Erro ao buscar categorias:', error instanceof Error ? error.message : error)
+    }
   }
 
   /**

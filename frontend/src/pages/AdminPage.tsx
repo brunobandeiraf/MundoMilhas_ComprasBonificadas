@@ -1,20 +1,32 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   getPrograms,
+  getUsers,
   createProgram,
   updateProgram,
+  toggleUserStatus,
+  deleteUser,
   runCrawler,
   runCrawlerForProgram,
   getCrawlerSchedule,
+  getCrawlerStatus,
   updateCrawlerSchedule,
   getCrawlerHistory,
+  getAdminStores,
+  updateStoreCategory,
+  mergeStores,
   ApiResponseError,
   type ProgramItem,
+  type UserItem,
+  type AdminStoreItem,
   type CrawlerRunResponse,
   type CrawlLogItem,
 } from '../services/api'
+import UserForm from '../components/UserForm'
 
-type Tab = 'crawler' | 'programs' | 'history'
+type Tab = 'users' | 'stores' | 'crawler' | 'history' | 'programs'
+
+type StatusFilter = 'all' | 'active' | 'inactive'
 
 interface CrawlerLog {
   timestamp: string
@@ -32,11 +44,23 @@ function timeToCron(hour: string, minute: string): string {
 }
 
 export default function AdminPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('crawler')
+  const [activeTab, setActiveTab] = useState<Tab>('users')
+
+  // Users state
+  const [users, setUsers] = useState<UserItem[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [userSearch, setUserSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [selectedUser, setSelectedUser] = useState<UserItem | null>(null)
+  const [showUserForm, setShowUserForm] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
+
+  // Programs state
   const [programs, setPrograms] = useState<ProgramItem[]>([])
   const [programsLoading, setProgramsLoading] = useState(false)
   const [crawlerRunning, setCrawlerRunning] = useState(false)
   const [crawlerRunningProgram, setCrawlerRunningProgram] = useState<string | null>(null)
+  const [runningPrograms, setRunningPrograms] = useState<string[]>([])
 
   const [programName, setProgramName] = useState('')
   const [programUrl, setProgramUrl] = useState('')
@@ -58,11 +82,22 @@ export default function AdminPage() {
   // History
   const [history, setHistory] = useState<CrawlLogItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyPage, setHistoryPage] = useState(1)
+  const [historyLimit, setHistoryLimit] = useState(10)
 
   const addLog = (message: string, type: CrawlerLog['type'] = 'info') => {
     const timestamp = new Date().toLocaleTimeString('pt-BR')
     setCrawlerLogs((prev) => [...prev, { timestamp, message, type }])
   }
+
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true)
+    try {
+      const response = await getUsers()
+      if (Array.isArray(response)) setUsers(response as unknown as UserItem[])
+      else setUsers((response as { data: UserItem[] }).data || [])
+    } catch {} finally { setUsersLoading(false) }
+  }, [])
 
   const loadPrograms = useCallback(async () => {
     setProgramsLoading(true)
@@ -83,7 +118,19 @@ export default function AdminPage() {
     try { setHistory(await getCrawlerHistory()) } catch {} finally { setHistoryLoading(false) }
   }, [])
 
-  useEffect(() => { loadPrograms(); loadSchedule(); loadHistory() }, [loadPrograms, loadSchedule, loadHistory])
+  useEffect(() => { loadUsers(); loadPrograms(); loadSchedule(); loadHistory() }, [loadUsers, loadPrograms, loadSchedule, loadHistory])
+
+  // Poll crawler status every 5 seconds
+  useEffect(() => {
+    const checkStatus = () => {
+      getCrawlerStatus().then((data) => {
+        setRunningPrograms(data.running)
+      }).catch(() => {})
+    }
+    checkStatus()
+    const interval = setInterval(checkStatus, 5000)
+    return () => clearInterval(interval)
+  }, [])
   useEffect(() => { if (activeTab === 'history') loadHistory() }, [activeTab, loadHistory])
 
   async function handleSaveSchedule() {
@@ -170,16 +217,59 @@ export default function AdminPage() {
         </div>
 
         <div className="admin-tabs">
+          <button className={`admin-tab ${activeTab === 'users' ? 'admin-tab--active' : ''}`} onClick={() => setActiveTab('users')}>
+            👥 Usuários
+          </button>
+          <button className={`admin-tab ${activeTab === 'stores' ? 'admin-tab--active' : ''}`} onClick={() => setActiveTab('stores')}>
+            🏪 Lojas
+          </button>
           <button className={`admin-tab ${activeTab === 'crawler' ? 'admin-tab--active' : ''}`} onClick={() => setActiveTab('crawler')}>
             🔄 Crawler
-          </button>
-          <button className={`admin-tab ${activeTab === 'programs' ? 'admin-tab--active' : ''}`} onClick={() => setActiveTab('programs')}>
-            🏷️ Programas
           </button>
           <button className={`admin-tab ${activeTab === 'history' ? 'admin-tab--active' : ''}`} onClick={() => setActiveTab('history')}>
             📋 Histórico
           </button>
+          <button className={`admin-tab ${activeTab === 'programs' ? 'admin-tab--active' : ''}`} onClick={() => setActiveTab('programs')}>
+            🏷️ Programas
+          </button>
         </div>
+
+        {/* TAB: Usuários */}
+        {activeTab === 'users' && (
+          <UsersTab
+            users={users}
+            loading={usersLoading}
+            search={userSearch}
+            setSearch={setUserSearch}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            selectedUser={selectedUser}
+            setSelectedUser={setSelectedUser}
+            showForm={showUserForm}
+            setShowForm={setShowUserForm}
+            togglingId={togglingId}
+            onToggleStatus={async (userId) => {
+              setTogglingId(userId)
+              try {
+                const updated = await toggleUserStatus(userId)
+                setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, isActive: updated.isActive } : u)))
+                if (selectedUser?.id === userId) setSelectedUser({ ...selectedUser, isActive: updated.isActive })
+              } catch {} finally { setTogglingId(null) }
+            }}
+            onDeleteUser={async (userId) => {
+              if (!confirm('Tem certeza que deseja excluir este usuário?')) return
+              try {
+                await deleteUser(userId)
+                setUsers((prev) => prev.filter((u) => u.id !== userId))
+                if (selectedUser?.id === userId) setSelectedUser(null)
+              } catch { alert('Não é possível excluir um usuário ativo.') }
+            }}
+            onUserCreated={() => { loadUsers(); setShowUserForm(false) }}
+          />
+        )}
+
+        {/* TAB: Lojas */}
+        {activeTab === 'stores' && <StoresManagementTab />}
 
         {/* TAB: Crawler */}
         {activeTab === 'crawler' && (
@@ -223,7 +313,7 @@ export default function AdminPage() {
             <div className="admin-panel__section">
               <h2>Executar Agora</h2>
               <div className="crawler-actions">
-                <button onClick={handleRunCrawler} disabled={crawlerRunning || !!crawlerRunningProgram} className="btn-crawler">
+                <button onClick={handleRunCrawler} disabled={crawlerRunning} className="btn-crawler">
                   {crawlerRunning ? <><span className="spinner-small" /> Executando...</> : '🔄 Executar Todos'}
                 </button>
               </div>
@@ -250,11 +340,13 @@ export default function AdminPage() {
                           </div>
                           <button
                             onClick={() => handleRunCrawlerForProgram(program.id, program.name)}
-                            disabled={crawlerRunning || crawlerRunningProgram === program.id}
+                            disabled={crawlerRunningProgram === program.id || runningPrograms.includes(program.id)}
                             className="btn-crawler-small"
                             title={`Executar crawler para ${program.name}`}
                           >
-                            {crawlerRunningProgram === program.id ? '...' : '▶ Executar'}
+                            {(crawlerRunningProgram === program.id || runningPrograms.includes(program.id)) ? (
+                              <><span className="spinner-small" /> Executando...</>
+                            ) : '▶ Executar'}
                           </button>
                         </div>
                       )
@@ -377,33 +469,427 @@ export default function AdminPage() {
             <div className="admin-panel__section">
               <h2>Histórico de Execuções</h2>
               {historyLoading ? <p className="admin-loading">Carregando...</p> : history.length === 0 ? <p className="admin-empty">Nenhuma execução.</p> : (
-                <div className="admin-table-wrapper">
-                  <table className="admin-table">
-                    <thead>
-                      <tr><th>Data/Hora</th><th>Programa</th><th>Status</th><th>Lojas</th><th>Duração</th><th>Erro</th></tr>
-                    </thead>
-                    <tbody>
-                      {history.map((log) => {
-                        const duration = Math.round((new Date(log.completedAt).getTime() - new Date(log.startedAt).getTime()) / 1000)
-                        return (
-                          <tr key={log.id}>
-                            <td>{new Date(log.completedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</td>
-                            <td className="td-bold">{log.programName}</td>
-                            <td><span className={`badge ${log.status === 'success' ? 'badge--active' : 'badge--error'}`}>{log.status === 'success' ? '✓' : '✗'}</span></td>
-                            <td>{log.storesFound}</td>
-                            <td>{duration}s</td>
-                            <td>{log.errorMessage || '—'}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  <p className="stores-showing" style={{ marginBottom: '1rem' }}>
+                    Mostrando <strong>{Math.min(historyLimit, history.length - (historyPage - 1) * historyLimit)}</strong> de <strong>{history.length}</strong> execuções
+                  </p>
+                  <div className="admin-table-wrapper">
+                    <table className="admin-table">
+                      <thead>
+                        <tr><th>Data/Hora</th><th>Programa</th><th>Status</th><th>Lojas</th><th>Duração</th><th>Erro</th></tr>
+                      </thead>
+                      <tbody>
+                        {history.slice((historyPage - 1) * historyLimit, historyPage * historyLimit).map((log) => {
+                          const duration = Math.round((new Date(log.completedAt).getTime() - new Date(log.startedAt).getTime()) / 1000)
+                          return (
+                            <tr key={log.id}>
+                              <td>{new Date(log.completedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</td>
+                              <td className="td-bold">{log.programName}</td>
+                              <td><span className={`badge ${log.status === 'success' ? 'badge--active' : 'badge--error'}`}>{log.status === 'success' ? '✓' : '✗'}</span></td>
+                              <td>{log.storesFound}</td>
+                              <td>{duration}s</td>
+                              <td>{log.errorMessage || '—'}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <nav className="pagination" style={{ marginTop: '1rem' }}>
+                    <div className="pagination__controls">
+                      <button className="pagination__button" onClick={() => setHistoryPage((p) => p - 1)} disabled={historyPage <= 1}>← Anterior</button>
+                      <span className="pagination__info">Página {historyPage} de {Math.ceil(history.length / historyLimit)}</span>
+                      <button className="pagination__button" onClick={() => setHistoryPage((p) => p + 1)} disabled={historyPage >= Math.ceil(history.length / historyLimit)}>Próxima →</button>
+                    </div>
+                    <div className="pagination__limit">
+                      <label htmlFor="history-limit">Itens:</label>
+                      <select id="history-limit" value={historyLimit} onChange={(e) => { setHistoryLimit(Number(e.target.value)); setHistoryPage(1) }} className="pagination__limit-select">
+                        <option value={10}>10</option>
+                        <option value={20}>20</option>
+                        <option value={50}>50</option>
+                      </select>
+                    </div>
+                  </nav>
+                </>
               )}
             </div>
           </div>
         )}
       </div>
     </main>
+  )
+}
+
+// Users Tab Component
+function UsersTab({
+  users, loading, search, setSearch, statusFilter, setStatusFilter,
+  selectedUser, setSelectedUser, showForm, setShowForm, togglingId,
+  onToggleStatus, onDeleteUser, onUserCreated,
+}: {
+  users: UserItem[]
+  loading: boolean
+  search: string
+  setSearch: (v: string) => void
+  statusFilter: StatusFilter
+  setStatusFilter: (v: StatusFilter) => void
+  selectedUser: UserItem | null
+  setSelectedUser: (v: UserItem | null) => void
+  showForm: boolean
+  setShowForm: (v: boolean) => void
+  togglingId: string | null
+  onToggleStatus: (id: string) => void
+  onDeleteUser: (id: string) => void
+  onUserCreated: () => void
+}) {
+  const filteredUsers = users.filter((user) => {
+    if (statusFilter === 'active' && !user.isActive) return false
+    if (statusFilter === 'inactive' && user.isActive) return false
+    if (!search) return true
+    const s = search.toLowerCase()
+    return user.email.toLowerCase().includes(s) || (user.name || '').toLowerCase().includes(s) || (user.phone || '').includes(s)
+  })
+
+  const activeCount = users.filter((u) => u.isActive).length
+  const inactiveCount = users.filter((u) => !u.isActive).length
+
+  return (
+    <div className="admin-panel">
+      <div className="admin-panel__section">
+        <div className="users-header" style={{ marginBottom: '1rem' }}>
+          <div>
+            <h2 style={{ border: 'none', padding: 0, margin: 0 }}>Usuários ({filteredUsers.length})</h2>
+          </div>
+          <button className="btn-new-user" onClick={() => setShowForm(!showForm)}>
+            {showForm ? '✕ Fechar' : '+ Novo'}
+          </button>
+        </div>
+
+        {showForm && (
+          <div style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '1px solid #f0f0f0' }}>
+            <UserForm onUserCreated={onUserCreated} />
+          </div>
+        )}
+
+        <div className="users-filters">
+          <div className="users-search">
+            <input type="text" placeholder="Buscar..." value={search}
+              onChange={(e) => setSearch(e.target.value)} className="users-search__input" />
+          </div>
+          <div className="users-status-filter">
+            <button className={`status-btn ${statusFilter === 'all' ? 'status-btn--active' : ''}`} onClick={() => setStatusFilter('all')}>Todos ({users.length})</button>
+            <button className={`status-btn ${statusFilter === 'active' ? 'status-btn--active' : ''}`} onClick={() => setStatusFilter('active')}>Ativos ({activeCount})</button>
+            <button className={`status-btn ${statusFilter === 'inactive' ? 'status-btn--active' : ''}`} onClick={() => setStatusFilter('inactive')}>Pendentes ({inactiveCount})</button>
+          </div>
+        </div>
+
+        {loading ? (
+          <p className="admin-loading">Carregando...</p>
+        ) : filteredUsers.length === 0 ? (
+          <p className="admin-empty">Nenhum usuário encontrado.</p>
+        ) : (
+          <div className="users-list">
+            {filteredUsers.map((user) => (
+              <div key={user.id} className={`user-card ${selectedUser?.id === user.id ? 'user-card--selected' : ''}`}
+                onClick={() => setSelectedUser(selectedUser?.id === user.id ? null : user)}>
+                <div className="user-card__main">
+                  <div className="user-card__avatar">{(user.name || user.email).charAt(0).toUpperCase()}</div>
+                  <div className="user-card__info">
+                    <span className="user-card__name">{user.name || '—'}</span>
+                    <span className="user-card__email">{user.email}</span>
+                  </div>
+                  <div className="user-card__badges">
+                    <span className={`badge ${user.role === 'admin' ? 'badge--admin' : 'badge--client'}`}>{user.role}</span>
+                    <span className={`badge ${user.isActive ? 'badge--active' : 'badge--inactive'}`}>{user.isActive ? 'Ativo' : 'Pendente'}</span>
+                  </div>
+                  <button className={`btn-toggle-status ${user.isActive ? 'btn-toggle-status--deactivate' : 'btn-toggle-status--activate'}`}
+                    onClick={(e) => { e.stopPropagation(); onToggleStatus(user.id) }} disabled={togglingId === user.id}>
+                    {togglingId === user.id ? '...' : user.isActive ? 'Desativar' : 'Ativar'}
+                  </button>
+                  {!user.isActive && (
+                    <button className="btn-delete-user" onClick={(e) => { e.stopPropagation(); onDeleteUser(user.id) }} title="Excluir">🗑</button>
+                  )}
+                </div>
+                {selectedUser?.id === user.id && (
+                  <div className="user-card__details">
+                    <div className="user-card__detail-row"><span className="user-card__detail-label">E-mail</span><span className="user-card__detail-value">{user.email}</span></div>
+                    <div className="user-card__detail-row"><span className="user-card__detail-label">Nome</span><span className="user-card__detail-value">{user.name || 'Não informado'}</span></div>
+                    <div className="user-card__detail-row"><span className="user-card__detail-label">Telefone</span><span className="user-card__detail-value">{user.phone || 'Não informado'}</span></div>
+                    <div className="user-card__detail-row"><span className="user-card__detail-label">Role</span><span className="user-card__detail-value">{user.role}</span></div>
+                    <div className="user-card__detail-row"><span className="user-card__detail-label">Cadastrado em</span><span className="user-card__detail-value">{new Date(user.createdAt).toLocaleDateString('pt-BR')}</span></div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Stores Management Tab
+function StoresManagementTab() {
+  const [stores, setStores] = useState<AdminStoreItem[]>([])
+  const [aliases, setAliases] = useState<Array<{ id: string; primaryStore: { id: string; name: string }; aliasStore: { id: string; name: string } }>>([])
+  const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
+  const [filterProgram, setFilterProgram] = useState('')
+  const [filterCategory, setFilterCategory] = useState('')
+  const [editingCategory, setEditingCategory] = useState<string | null>(null)
+  const [categoryInput, setCategoryInput] = useState('')
+  const [message, setMessage] = useState('')
+  const [page, setPage] = useState(1)
+  const limit = 20
+
+  // Link stores state
+  const [primaryId, setPrimaryId] = useState('')
+  const [aliasId, setAliasId] = useState('')
+  const [linkSearch1, setLinkSearch1] = useState('')
+  const [linkSearch2, setLinkSearch2] = useState('')
+
+  const loadStores = useCallback(async () => {
+    setLoading(true)
+    try { setStores(await getAdminStores()) } catch {} finally { setLoading(false) }
+  }, [])
+
+  const loadAliases = useCallback(async () => {
+    try {
+      const { getStoreAliases } = await import('../services/api')
+      setAliases(await getStoreAliases())
+    } catch {}
+  }, [])
+
+  useEffect(() => { loadStores(); loadAliases() }, [loadStores, loadAliases])
+
+  // Get unique categories and programs from stores
+  const allCategories = [...new Set(stores.map(s => s.category).filter(Boolean))] as string[]
+  const allPrograms = [...new Set(stores.flatMap(s => s.programs))]
+
+  const filteredStores = stores.filter((s) => {
+    if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false
+    if (filterProgram && !s.programs.includes(filterProgram)) return false
+    if (filterCategory && s.category !== filterCategory) return false
+    return true
+  })
+  const totalPages = Math.ceil(filteredStores.length / limit)
+  const paginatedStores = filteredStores.slice((page - 1) * limit, page * limit)
+
+  async function handleSaveCategory(storeId: string) {
+    try {
+      await updateStoreCategory(storeId, categoryInput)
+      setStores((prev) => prev.map((s) => s.id === storeId ? { ...s, category: categoryInput } : s))
+      setEditingCategory(null)
+      setMessage('Categoria atualizada.')
+      setTimeout(() => setMessage(''), 3000)
+    } catch {}
+  }
+
+  async function handleLinkStores() {
+    if (!primaryId || !aliasId) return
+    try {
+      const result = await mergeStores(primaryId, aliasId)
+      setMessage(result.message)
+      setPrimaryId(''); setAliasId('')
+      setLinkSearch1(''); setLinkSearch2('')
+      loadAliases()
+      setTimeout(() => setMessage(''), 5000)
+    } catch (err) {
+      setMessage(err instanceof ApiResponseError ? err.message : 'Erro ao vincular.')
+    }
+  }
+
+  async function handleRemoveAlias(id: string) {
+    try {
+      const { removeStoreAlias } = await import('../services/api')
+      await removeStoreAlias(id)
+      loadAliases()
+      setMessage('Vínculo removido.')
+      setTimeout(() => setMessage(''), 3000)
+    } catch {}
+  }
+
+  const stores1 = linkSearch1 ? stores.filter((s) => s.name.toLowerCase().includes(linkSearch1.toLowerCase())) : []
+  const stores2 = linkSearch2 ? stores.filter((s) => s.name.toLowerCase().includes(linkSearch2.toLowerCase())) : []
+
+  return (
+    <div className="admin-panel">
+      {message && <div className="success-message">{message}</div>}
+
+      {/* Seção 1: Categorias */}
+      <div className="admin-panel__section">
+        <h2>Categorias</h2>
+        <p className="admin-description">Selecione uma categoria existente para cada loja.</p>
+
+        {/* Filtros */}
+        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ flex: 2, minWidth: '180px' }}>
+            <input type="text" placeholder="Buscar loja..." value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1) }}
+              style={{ width: '100%', padding: '0.5rem 0.75rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem' }} />
+          </div>
+          <div style={{ minWidth: '140px' }}>
+            <select value={filterProgram} onChange={(e) => { setFilterProgram(e.target.value); setPage(1) }}
+              style={{ width: '100%', padding: '0.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem' }}>
+              <option value="">Todos os programas</option>
+              {allPrograms.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div style={{ minWidth: '140px' }}>
+            <select value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setPage(1) }}
+              style={{ width: '100%', padding: '0.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem' }}>
+              <option value="">Todas as categorias</option>
+              {allCategories.sort().map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {loading ? <p className="admin-loading">Carregando...</p> : (
+          <>
+            <p className="stores-showing" style={{ marginBottom: '0.5rem' }}>
+              Mostrando <strong>{paginatedStores.length}</strong> de <strong>{filteredStores.length}</strong> lojas
+            </p>
+            <div className="admin-table-wrapper">
+              <table className="admin-table">
+                <thead><tr><th>Loja</th><th>Categoria</th><th>Programas</th></tr></thead>
+                <tbody>
+                  {paginatedStores.map((store) => (
+                    <tr key={store.id}>
+                      <td className="td-bold">{store.name}</td>
+                      <td>
+                        {editingCategory === store.id ? (
+                          <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                            <select value={categoryInput} onChange={(e) => setCategoryInput(e.target.value)}
+                              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                              <option value="">Selecione...</option>
+                              {allCategories.sort().map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                            <button onClick={() => handleSaveCategory(store.id)} className="btn-save-url" disabled={!categoryInput}>OK</button>
+                            <button onClick={() => setEditingCategory(null)} className="btn-cancel-url">✕</button>
+                          </div>
+                        ) : (
+                          <span onClick={() => { setEditingCategory(store.id); setCategoryInput(store.category || '') }}
+                            style={{ cursor: 'pointer', borderBottom: '1px dashed #ccc' }} title="Clique para alterar">
+                            {store.category || '—'}
+                          </span>
+                        )}
+                      </td>
+                      <td>{store.programs.join(', ') || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {totalPages > 1 && (
+              <nav className="pagination" style={{ marginTop: '1rem' }}>
+                <div className="pagination__controls">
+                  <button className="pagination__button" onClick={() => setPage(p => p - 1)} disabled={page <= 1}>← Anterior</button>
+                  <span className="pagination__info">Página {page} de {totalPages}</span>
+                  <button className="pagination__button" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages}>Próxima →</button>
+                </div>
+              </nav>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Seção 2: Vincular Lojas */}
+      <div className="admin-panel__section">
+        <h2>Vincular Lojas</h2>
+        <p className="admin-description">
+          Quando a mesma loja tem nomes diferentes em programas distintos, vincule-as aqui para exibir como uma só.
+        </p>
+
+        <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+          {/* Lado 1 */}
+          <div style={{ flex: 1, minWidth: '220px', padding: '1rem', background: '#f8f9fa', borderRadius: '8px' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.03em', color: '#6b7280' }}>
+              1. Programa
+            </label>
+            <select value={linkSearch1} onChange={(e) => { setLinkSearch1(e.target.value); setPrimaryId('') }}
+              style={{ width: '100%', padding: '0.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
+              <option value="">Selecione o programa</option>
+              {allPrograms.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+
+            {linkSearch1 && (
+              <>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.03em', color: '#6b7280' }}>
+                  2. Loja
+                </label>
+                <select value={primaryId} onChange={(e) => setPrimaryId(e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem' }}>
+                  <option value="">Selecione a loja</option>
+                  {stores.filter(s => s.programs.includes(linkSearch1)).sort((a, b) => a.name.localeCompare(b.name)).map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                {primaryId && <p style={{ fontSize: '0.75rem', color: '#16a34a', marginTop: '0.25rem' }}>✓ {stores.find(s => s.id === primaryId)?.name}</p>}
+              </>
+            )}
+          </div>
+
+          {/* Separador */}
+          <div style={{ display: 'flex', alignItems: 'center', fontSize: '1.5rem', color: '#9ca3af' }}>=</div>
+
+          {/* Lado 2 */}
+          <div style={{ flex: 1, minWidth: '220px', padding: '1rem', background: '#f8f9fa', borderRadius: '8px' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.03em', color: '#6b7280' }}>
+              1. Programa
+            </label>
+            <select value={linkSearch2} onChange={(e) => { setLinkSearch2(e.target.value); setAliasId('') }}
+              style={{ width: '100%', padding: '0.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
+              <option value="">Selecione o programa</option>
+              {allPrograms.filter(p => p !== linkSearch1).map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+
+            {linkSearch2 && (
+              <>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.03em', color: '#6b7280' }}>
+                  2. Loja
+                </label>
+                <select value={aliasId} onChange={(e) => setAliasId(e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', border: '1.5px solid #e5e7eb', borderRadius: '8px', fontSize: '0.875rem' }}>
+                  <option value="">Selecione a loja</option>
+                  {stores.filter(s => s.programs.includes(linkSearch2)).sort((a, b) => a.name.localeCompare(b.name)).map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                {aliasId && <p style={{ fontSize: '0.75rem', color: '#16a34a', marginTop: '0.25rem' }}>✓ {stores.find(s => s.id === aliasId)?.name}</p>}
+              </>
+            )}
+          </div>
+        </div>
+
+        {primaryId && aliasId && (
+          <div style={{ padding: '1rem', background: '#eff6ff', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.875rem' }}>
+            <strong>{stores.find(s => s.id === primaryId)?.name}</strong> ({linkSearch1}) será vinculada com <strong>{stores.find(s => s.id === aliasId)?.name}</strong> ({linkSearch2})
+          </div>
+        )}
+
+        <button onClick={handleLinkStores} disabled={!primaryId || !aliasId} className="btn-crawler" style={{ width: 'auto' }}>
+          🔗 Confirmar Vínculo
+        </button>
+
+        {aliases.length > 0 && (
+          <div style={{ marginTop: '1.5rem' }}>
+            <h3>Vínculos Existentes ({aliases.length})</h3>
+            <div className="admin-table-wrapper">
+              <table className="admin-table">
+                <thead><tr><th>Loja Principal</th><th>Loja Vinculada</th><th>Ação</th></tr></thead>
+                <tbody>
+                  {aliases.map((a) => (
+                    <tr key={a.id}>
+                      <td className="td-bold">{a.primaryStore.name}</td>
+                      <td>{a.aliasStore.name}</td>
+                      <td><button onClick={() => handleRemoveAlias(a.id)} className="btn-delete-user" title="Remover vínculo">🗑</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }

@@ -5,6 +5,8 @@ import { ValidationError } from '../middleware/errorHandler.js'
 export interface StoreFilters {
   search?: string
   category?: string
+  program?: string
+  sortBy?: string
   minScore?: number
   maxScore?: number
   page?: number
@@ -38,23 +40,46 @@ export const storeService = {
       throw new ValidationError('Faixa de pontuação inválida: valor mínimo maior que valor máximo')
     }
 
-    // Fetch ALL stores with scores
+    // Fetch ALL stores with scores and aliases
     const stores = await db.store.findMany({
       include: {
         scores: {
+          include: { program: true },
+        },
+        primaryAliases: {
           include: {
-            program: true,
+            aliasStore: {
+              include: {
+                scores: { include: { program: true } },
+              },
+            },
           },
         },
       },
     })
+
+    // Build a set of alias store IDs (these will be hidden, their scores merged into primary)
+    const aliasStoreIds = new Set<string>()
+    const aliases = await db.storeAlias.findMany()
+    for (const alias of aliases) {
+      aliasStoreIds.add(alias.aliasStoreId)
+    }
 
     // Process stores
     const processedStores: StoreWithScore[] = []
     const searchLower = filters.search?.toLowerCase()
 
     for (const store of stores) {
-      if (store.scores.length === 0) continue
+      // Skip stores that are aliases (their scores are shown under the primary)
+      if (aliasStoreIds.has(store.id)) continue
+
+      // Collect all scores: own + from aliases
+      const allScores = [...store.scores]
+      for (const alias of store.primaryAliases) {
+        allScores.push(...alias.aliasStore.scores)
+      }
+
+      if (allScores.length === 0) continue
 
       // Name filter
       if (searchLower && !store.name.toLowerCase().includes(searchLower)) continue
@@ -62,11 +87,19 @@ export const storeService = {
       // Category filter
       if (filters.category && store.category !== filters.category) continue
 
+      // Program filter
+      if (filters.program) {
+        const hasProgram = allScores.some(
+          (s) => s.program.name.toLowerCase() === filters.program!.toLowerCase()
+        )
+        if (!hasProgram) continue
+      }
+
       // Find the best score across all programs
       let bestScore = 0
       let programName = ''
 
-      for (const bonusScore of store.scores) {
+      for (const bonusScore of allScores) {
         if (bonusScore.score > bestScore) {
           bestScore = bonusScore.score
           programName = bonusScore.program.name
@@ -86,15 +119,40 @@ export const storeService = {
         link: store.link,
         bestScore,
         programName,
-        scores: store.scores.map((s) => ({
+        scores: allScores.map((s) => ({
           programName: s.program.name,
           score: s.score,
         })),
       })
     }
 
-    // Sort by bestScore descending
-    processedStores.sort((a, b) => b.bestScore - a.bestScore)
+    // Sort
+    const sortBy = filters.sortBy || 'relevance'
+    switch (sortBy) {
+      case 'relevance':
+        // Relevance: prioritize scores between 6 and 25, then by score desc
+        processedStores.sort((a, b) => {
+          const aRelevant = a.bestScore >= 6 && a.bestScore <= 25 ? 1 : 0
+          const bRelevant = b.bestScore >= 6 && b.bestScore <= 25 ? 1 : 0
+          if (aRelevant !== bRelevant) return bRelevant - aRelevant
+          return b.bestScore - a.bestScore
+        })
+        break
+      case 'score_desc':
+        processedStores.sort((a, b) => b.bestScore - a.bestScore)
+        break
+      case 'score_asc':
+        processedStores.sort((a, b) => a.bestScore - b.bestScore)
+        break
+      case 'name_asc':
+        processedStores.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+        break
+      case 'name_desc':
+        processedStores.sort((a, b) => b.name.localeCompare(a.name, 'pt-BR'))
+        break
+      default:
+        processedStores.sort((a, b) => b.bestScore - a.bestScore)
+    }
 
     // Pagination
     const total = processedStores.length

@@ -43,7 +43,7 @@ export function ScoreRangeFilter({
   return (
     <div className="score-range-filter">
       <div className="score-range-filter__field">
-        <label htmlFor="min-score-input">Pontuação mínima</label>
+        <label htmlFor="min-score-input">Mínimo</label>
         <input
           id="min-score-input"
           type="number"
@@ -56,7 +56,7 @@ export function ScoreRangeFilter({
         />
       </div>
       <div className="score-range-filter__field">
-        <label htmlFor="max-score-input">Pontuação máxima</label>
+        <label htmlFor="max-score-input">Máximo</label>
         <input
           id="max-score-input"
           type="number"

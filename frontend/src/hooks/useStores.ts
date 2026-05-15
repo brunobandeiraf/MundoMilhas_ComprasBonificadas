@@ -54,7 +54,7 @@ export function useStores(filters: StoreFilters = {}): UseStoresReturn {
     return () => {
       cancelled = true
     }
-  }, [filters.page, filters.limit, filters.search, filters.category, filters.minScore, filters.maxScore, refetchCount])
+  }, [filters.page, filters.limit, filters.search, filters.category, filters.program, filters.sortBy, filters.minScore, filters.maxScore, refetchCount])
 
   return { stores, pagination, isLoading, error, refetch }
 }

@@ -11,10 +11,6 @@ export function SearchFilter({ value, onChange }: SearchFilterProps) {
     onChange(newValue)
   }
 
-  const handleClear = () => {
-    onChange('')
-  }
-
   return (
     <div className="search-filter">
       <label htmlFor="search-input">Buscar loja</label>
@@ -28,16 +24,6 @@ export function SearchFilter({ value, onChange }: SearchFilterProps) {
           placeholder="Buscar loja..."
           aria-label="Buscar loja por nome"
         />
-        {value && (
-          <button
-            type="button"
-            onClick={handleClear}
-            aria-label="Limpar busca"
-            className="search-filter__clear-btn"
-          >
-            ✕
-          </button>
-        )}
       </div>
     </div>
   )

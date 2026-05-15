@@ -4,7 +4,6 @@ import Header from './components/Header'
 import LoginPage from './pages/LoginPage'
 import ActivationPage from './pages/ActivationPage'
 import StoresPage from './pages/StoresPage'
-import UsersPage from './pages/UsersPage'
 import AdminPage from './pages/AdminPage'
 import type { ReactNode } from 'react'
 
@@ -74,14 +73,6 @@ function AppLayout() {
             <ProtectedRoute>
               <StoresPage />
             </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/users"
-          element={
-            <AdminRoute>
-              <UsersPage />
-            </AdminRoute>
           }
         />
         <Route

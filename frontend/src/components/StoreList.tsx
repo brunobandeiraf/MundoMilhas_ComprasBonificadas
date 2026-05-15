@@ -106,13 +106,13 @@ export default function StoreList({ stores }: StoreListProps) {
                             {s.description && (
                               <div className="detail-block">
                                 <span className="detail-block__label">Descrição</span>
-                                <p className="detail-block__text">{s.description}</p>
+                                <div className="detail-block__html" dangerouslySetInnerHTML={{ __html: s.description }} />
                               </div>
                             )}
                             {s.rule && (
                               <div className="detail-block">
-                                <span className="detail-block__label">Regra</span>
-                                <p className="detail-block__text">{s.rule}</p>
+                                <span className="detail-block__label">Regras</span>
+                                <div className="detail-block__html" dangerouslySetInnerHTML={{ __html: s.rule }} />
                               </div>
                             )}
                             {s.deadline && (

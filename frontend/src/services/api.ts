@@ -155,6 +155,8 @@ export interface StoreFilters {
   limit?: number
   search?: string
   category?: string
+  program?: string
+  sortBy?: string
   minScore?: number
   maxScore?: number
 }
@@ -165,6 +167,8 @@ export async function getStores(filters: StoreFilters = {}): Promise<StoresRespo
   if (filters.limit) params.set('limit', String(filters.limit))
   if (filters.search) params.set('search', filters.search)
   if (filters.category) params.set('category', filters.category)
+  if (filters.program) params.set('program', filters.program)
+  if (filters.sortBy) params.set('sortBy', filters.sortBy)
   if (filters.minScore) params.set('minScore', String(filters.minScore))
   if (filters.maxScore) params.set('maxScore', String(filters.maxScore))
 
@@ -317,6 +321,11 @@ export async function getCrawlerSchedule(): Promise<{ schedule: string }> {
   return handleResponse<{ schedule: string }>(response)
 }
 
+export async function getCrawlerStatus(): Promise<{ running: string[] }> {
+  const response = await fetchWithAuth('/admin/crawler/status')
+  return handleResponse<{ running: string[] }>(response)
+}
+
 export async function updateCrawlerSchedule(schedule: string): Promise<void> {
   const response = await fetchWithAuth('/admin/crawler/schedule', {
     method: 'PUT',
@@ -339,4 +348,50 @@ export interface CrawlLogItem {
 export async function getCrawlerHistory(): Promise<CrawlLogItem[]> {
   const response = await fetchWithAuth('/admin/crawler/history')
   return handleResponse<CrawlLogItem[]>(response)
+}
+
+// Store management
+export interface AdminStoreItem {
+  id: string
+  name: string
+  category: string | null
+  imageUrl: string | null
+  programs: string[]
+}
+
+export async function getAdminStores(): Promise<AdminStoreItem[]> {
+  const response = await fetchWithAuth('/admin/stores')
+  return handleResponse<AdminStoreItem[]>(response)
+}
+
+export async function updateStoreCategory(storeId: string, category: string): Promise<void> {
+  const response = await fetchWithAuth(`/admin/stores/${storeId}/category`, {
+    method: 'PATCH',
+    body: JSON.stringify({ category }),
+  })
+  await handleResponse(response)
+}
+
+export async function mergeStores(primaryStoreId: string, aliasStoreId: string): Promise<{ message: string }> {
+  const response = await fetchWithAuth('/admin/stores/merge', {
+    method: 'POST',
+    body: JSON.stringify({ primaryStoreId, aliasStoreId }),
+  })
+  return handleResponse<{ message: string }>(response)
+}
+
+export interface StoreAliasItem {
+  id: string
+  primaryStore: { id: string; name: string }
+  aliasStore: { id: string; name: string }
+}
+
+export async function getStoreAliases(): Promise<StoreAliasItem[]> {
+  const response = await fetchWithAuth('/admin/stores/aliases')
+  return handleResponse<StoreAliasItem[]>(response)
+}
+
+export async function removeStoreAlias(aliasId: string): Promise<void> {
+  const response = await fetchWithAuth(`/admin/stores/aliases/${aliasId}`, { method: 'DELETE' })
+  await handleResponse(response)
 }

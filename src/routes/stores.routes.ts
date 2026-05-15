@@ -6,6 +6,7 @@ const router = Router()
 
 router.get('/api/stores', authenticate, StoresController.listStores)
 router.get('/api/stores/categories', authenticate, StoresController.listCategories)
+router.get('/api/stores/programs', authenticate, StoresController.listPrograms)
 router.get('/api/stores/:id', authenticate, StoresController.getStoreDetails)
 
 export default router

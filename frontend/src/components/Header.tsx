@@ -22,16 +22,8 @@ export default function Header() {
             to="/stores"
             className={`app-header__link ${isActive('/stores') ? 'app-header__link--active' : ''}`}
           >
-            Lojas
+            Ofertas
           </Link>
-          {isAdmin() && (
-            <Link
-              to="/users"
-              className={`app-header__link ${isActive('/users') ? 'app-header__link--active' : ''}`}
-            >
-              Usuários
-            </Link>
-          )}
           {isAdmin() && (
             <Link
               to="/admin"

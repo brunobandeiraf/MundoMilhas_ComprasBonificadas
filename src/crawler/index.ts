@@ -17,6 +17,13 @@ async function registerScrapers(): Promise<void> {
   } catch (error) {
     console.warn('[Crawler] Failed to load LiveloScraper:', error instanceof Error ? error.message : error)
   }
+
+  try {
+    const { EsferaScraper } = await import('./scrapers/esfera.scraper.js')
+    crawlerService.registerScraper(new EsferaScraper())
+  } catch (error) {
+    console.warn('[Crawler] Failed to load EsferaScraper:', error instanceof Error ? error.message : error)
+  }
 }
 
 /**

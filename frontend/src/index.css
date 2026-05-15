@@ -1841,3 +1841,112 @@ button:disabled {
   background: var(--color-error-bg);
   border-color: var(--color-error);
 }
+
+/* ===== SORT FILTER ===== */
+.filter-sort {
+  min-width: 160px;
+}
+
+.filter-sort label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sort-select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.sort-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+/* ===== PROGRAM FILTER ===== */
+.filter-program {
+  min-width: 140px;
+}
+
+.filter-program label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.program-select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.program-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+/* ===== DETAIL BLOCK HTML CONTENT ===== */
+.detail-block__html {
+  font-size: 0.8125rem;
+  color: var(--color-text);
+  line-height: 1.6;
+  padding: 0.75rem 1rem;
+  background: var(--color-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border-light);
+}
+
+.detail-block__html p {
+  margin: 0 0 0.5rem;
+}
+
+.detail-block__html p:last-child {
+  margin-bottom: 0;
+}
+
+.detail-block__html ul,
+.detail-block__html ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+
+.detail-block__html li {
+  margin-bottom: 0.375rem;
+  line-height: 1.5;
+}
+
+.detail-block__html strong {
+  font-weight: 600;
+}
+
+.detail-block__html a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.detail-block__html a:hover {
+  text-decoration: underline;
+}

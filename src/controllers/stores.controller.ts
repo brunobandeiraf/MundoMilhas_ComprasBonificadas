@@ -33,6 +33,20 @@ export const StoresController = {
     }
   },
 
+  async listPrograms(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { db } = await import('../config/database.js')
+      const programs = await db.loyaltyProgram.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      })
+      res.status(200).json(programs)
+    } catch (error) {
+      next(error)
+    }
+  },
+
   async getStoreDetails(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params

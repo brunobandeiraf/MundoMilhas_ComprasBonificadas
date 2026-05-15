@@ -64,15 +64,31 @@ export const crawlerService = {
   },
 
   /**
+   * Track which programs are currently running to prevent duplicate executions.
+   */
+  isRunning: new Set<string>(),
+
+  /**
    * Run crawlers for all active programs.
-   * Each program runs independently - failure in one does not affect others.
+   * Livelo always runs first (other programs depend on its stores being created first).
    */
   async runAll(): Promise<CrawlResult[]> {
     const programs = await programService.listPrograms()
+    // Sort: Livelo first, then alphabetical
+    const sorted = [...programs].sort((a, b) => {
+      if (a.name === 'Livelo') return -1
+      if (b.name === 'Livelo') return 1
+      return a.name.localeCompare(b.name)
+    })
+
+    console.log(`[CrawlerService] Ordem de execução: ${sorted.map(p => p.name).join(' → ')}`)
+
     const results: CrawlResult[] = []
 
-    for (const program of programs) {
+    for (const program of sorted) {
+      console.log(`[CrawlerService] Iniciando: ${program.name}`)
       const result = await crawlerService.runForProgram(program.id)
+      console.log(`[CrawlerService] Concluído: ${program.name} (${result.status})`)
       results.push(result)
     }
 
@@ -85,8 +101,22 @@ export const crawlerService = {
    * On failure: discard partial data, keep previous data, log error.
    */
   async runForProgram(programId: string): Promise<CrawlResult> {
+    // Prevent duplicate execution
+    if (crawlerService.isRunning.has(programId)) {
+      return {
+        programId,
+        programName: 'Unknown',
+        status: 'error',
+        storesFound: 0,
+        errorMessage: 'Este programa já está em execução. Aguarde a conclusão.',
+        duration: 0,
+      }
+    }
+
+    crawlerService.isRunning.add(programId)
     const startedAt = new Date()
 
+    try {
     // Find the program
     const program = await db.loyaltyProgram.findUnique({
       where: { id: programId },
@@ -155,20 +185,28 @@ export const crawlerService = {
       const storeNames: string[] = []
 
       for (const item of scraperResults) {
-        // Upsert store
+        // Check if store already exists
+        const existingStore = await db.store.findFirst({
+          where: { name: item.storeName },
+        })
+
+        // Upsert store - only set category if store is new or has no category
+        // New stores from non-Livelo programs get "Outros" as default category
+        const defaultCategory = existingStore?.category || item.category || 'Outros'
+
         const store = await db.store.upsert({
           where: { name: item.storeName },
           create: {
             name: item.storeName,
             imageUrl: item.imageUrl || null,
-            category: item.category || null,
+            category: item.category || 'Outros',
             description: item.description || null,
             link: item.link || null,
           },
           update: {
             updatedAt: new Date(),
             imageUrl: item.imageUrl || undefined,
-            category: item.category || undefined,
+            // Never overwrite existing category
             description: item.description || undefined,
             link: item.link || undefined,
           },
@@ -295,6 +333,9 @@ export const crawlerService = {
       })
 
       return result
+    }
+    } finally {
+      crawlerService.isRunning.delete(programId)
     }
   },
 }

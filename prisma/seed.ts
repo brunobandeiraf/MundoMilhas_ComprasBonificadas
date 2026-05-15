@@ -45,6 +45,24 @@ async function main() {
   } else {
     console.log('[Seed] Programa Livelo já existe.')
   }
+
+  // Seed do programa Esfera
+  const existingEsfera = await prisma.loyaltyProgram.findFirst({
+    where: { name: 'Esfera' },
+  })
+
+  if (!existingEsfera) {
+    await prisma.loyaltyProgram.create({
+      data: {
+        name: 'Esfera',
+        url: 'https://www.esfera.com.vc/junte-pontos/junte-pontos/esf02163',
+        isActive: true,
+      },
+    })
+    console.log('[Seed] Programa Esfera criado.')
+  } else {
+    console.log('[Seed] Programa Esfera já existe.')
+  }
 }
 
 main()

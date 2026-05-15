@@ -171,6 +171,16 @@ export const AdminController = {
     }
   },
 
+  async getCrawlerStatus(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { crawlerService } = await import('../services/crawler.service.js')
+      const running = Array.from(crawlerService.isRunning)
+      res.json({ running })
+    } catch (error) {
+      next(error)
+    }
+  },
+
   async getCrawlerSchedule(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const schedule = await getCurrentSchedule()
@@ -201,6 +211,98 @@ export const AdminController = {
         take: 100,
       })
       res.json(logs)
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async listAllStores(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const stores = await db.store.findMany({
+        orderBy: { name: 'asc' },
+        include: {
+          scores: { include: { program: true } },
+        },
+      })
+      res.json(stores.map((s) => ({
+        id: s.id,
+        name: s.name,
+        category: s.category,
+        imageUrl: s.imageUrl,
+        programs: s.scores.map((sc) => sc.program.name),
+      })))
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async updateStoreCategory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { storeId } = req.params
+      const { category } = req.body
+      if (!category) {
+        throw new ValidationError('Categoria é obrigatória')
+      }
+      const store = await db.store.update({
+        where: { id: storeId },
+        data: { category },
+      })
+      res.json(store)
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async mergeStores(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { primaryStoreId, aliasStoreId } = req.body
+      if (!primaryStoreId || !aliasStoreId) {
+        throw new ValidationError('IDs das lojas são obrigatórios')
+      }
+      if (primaryStoreId === aliasStoreId) {
+        throw new ValidationError('Não é possível vincular uma loja com ela mesma')
+      }
+
+      // Check both stores exist
+      const primary = await db.store.findUnique({ where: { id: primaryStoreId } })
+      const alias = await db.store.findUnique({ where: { id: aliasStoreId } })
+      if (!primary || !alias) {
+        throw new ValidationError('Uma das lojas não foi encontrada')
+      }
+
+      // Create the alias link
+      await db.storeAlias.upsert({
+        where: { primaryStoreId_aliasStoreId: { primaryStoreId, aliasStoreId } },
+        create: { primaryStoreId, aliasStoreId },
+        update: {},
+      })
+
+      res.json({ message: `"${alias.name}" vinculada como alias de "${primary.name}".` })
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async listAliases(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const aliases = await db.storeAlias.findMany({
+        include: {
+          primaryStore: { select: { id: true, name: true } },
+          aliasStore: { select: { id: true, name: true } },
+        },
+        orderBy: { primaryStore: { name: 'asc' } },
+      })
+      res.json(aliases)
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async removeAlias(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { aliasId } = req.params
+      await db.storeAlias.delete({ where: { id: aliasId } })
+      res.json({ message: 'Vínculo removido.' })
     } catch (error) {
       next(error)
     }

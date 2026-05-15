@@ -4,6 +4,8 @@ export const storeFiltersSchema = z
   .object({
     search: z.string().max(100).optional(),
     category: z.string().optional(),
+    program: z.string().optional(),
+    sortBy: z.enum(['relevance', 'score_desc', 'score_asc', 'name_asc', 'name_desc']).optional(),
     minScore: z.coerce.number().int().min(1).max(99).optional(),
     maxScore: z.coerce.number().int().min(1).max(99).optional(),
     page: z.coerce.number().int().min(1).optional(),

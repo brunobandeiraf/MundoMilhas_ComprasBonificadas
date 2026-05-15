@@ -47,6 +47,8 @@ model Store {
   updatedAt   DateTime @updatedAt
   scores      BonusScore[]
   history     ScoreHistory[]
+  primaryAliases StoreAlias[] @relation("PrimaryStore")
+  aliasOf        StoreAlias[] @relation("AliasStore")
 }
 
 // Current score (latest value, one per store+program)
@@ -96,4 +98,15 @@ model SystemConfig {
   id    String @id @default("singleton")
   key   String @unique
   value String
+}
+
+// Links stores that are the same across different programs (e.g., "Extra" in Livelo = "Extra.com.br" in Esfera)
+model StoreAlias {
+  id            String @id @default(uuid())
+  primaryStoreId String
+  aliasStoreId   String
+  primaryStore  Store  @relation("PrimaryStore", fields: [primaryStoreId], references: [id], onDelete: Cascade)
+  aliasStore    Store  @relation("AliasStore", fields: [aliasStoreId], references: [id], onDelete: Cascade)
+
+  @@unique([primaryStoreId, aliasStoreId])
 }
