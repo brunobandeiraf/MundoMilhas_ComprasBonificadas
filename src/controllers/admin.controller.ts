@@ -83,6 +83,33 @@ export const AdminController = {
     }
   },
 
+  async updateUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { userId } = req.params
+      const { name, phone, email } = req.body
+
+      const user = await db.user.findUnique({ where: { id: userId } })
+      if (!user) {
+        res.status(404).json({ error: 'Usuário não encontrado' })
+        return
+      }
+
+      const updateData: Record<string, string | null> = {}
+      if (name !== undefined) updateData.name = name || null
+      if (phone !== undefined) updateData.phone = phone || null
+      if (email !== undefined) updateData.email = email
+
+      const updatedUser = await db.user.update({
+        where: { id: userId },
+        data: updateData,
+      })
+
+      res.json(updatedUser)
+    } catch (error) {
+      next(error)
+    }
+  },
+
   async deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { userId } = req.params
@@ -107,7 +134,12 @@ export const AdminController = {
   async listPrograms(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const programs = await programService.listPrograms()
-      res.json(programs)
+      // Add store count for each program
+      const withCounts = await Promise.all(programs.map(async (p) => {
+        const storeCount = await db.bonusScore.count({ where: { programId: p.id } })
+        return { ...p, storeCount }
+      }))
+      res.json(withCounts)
     } catch (error) {
       next(error)
     }
@@ -175,7 +207,15 @@ export const AdminController = {
     try {
       const { crawlerService } = await import('../services/crawler.service.js')
       const running = Array.from(crawlerService.isRunning)
-      res.json({ running })
+      const progress: Record<string, { current: number; total: number }> = {}
+      for (const [id, p] of crawlerService.progress) {
+        progress[id] = p
+      }
+      const startTimes: Record<string, number> = {}
+      for (const [id, t] of crawlerService.startTimes) {
+        startTimes[id] = t
+      }
+      res.json({ running, progress, startTimes })
     } catch (error) {
       next(error)
     }
@@ -222,12 +262,13 @@ export const AdminController = {
         orderBy: { name: 'asc' },
         include: {
           scores: { include: { program: true } },
+          categories: { include: { category: true } },
         },
       })
       res.json(stores.map((s) => ({
         id: s.id,
         name: s.name,
-        category: s.category,
+        categories: s.categories.map((sc: { category: { name: string } }) => sc.category.name),
         imageUrl: s.imageUrl,
         programs: s.scores.map((sc) => sc.program.name),
       })))
@@ -239,15 +280,28 @@ export const AdminController = {
   async updateStoreCategory(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { storeId } = req.params
-      const { category } = req.body
-      if (!category) {
-        throw new ValidationError('Categoria é obrigatória')
+      const { categories } = req.body // array of category names
+      if (!categories || !Array.isArray(categories)) {
+        throw new ValidationError('Lista de categorias é obrigatória')
       }
-      const store = await db.store.update({
-        where: { id: storeId },
-        data: { category },
-      })
-      res.json(store)
+
+      // Remove all existing categories for this store
+      await db.storeCategory.deleteMany({ where: { storeId } })
+
+      // Add new categories
+      for (const catName of categories) {
+        if (!catName) continue
+        const cat = await db.category.upsert({
+          where: { name: catName },
+          create: { name: catName },
+          update: {},
+        })
+        await db.storeCategory.create({
+          data: { storeId, categoryId: cat.id },
+        })
+      }
+
+      res.json({ message: 'Categorias atualizadas.' })
     } catch (error) {
       next(error)
     }

@@ -49,6 +49,23 @@ model Store {
   history     ScoreHistory[]
   primaryAliases StoreAlias[] @relation("PrimaryStore")
   aliasOf        StoreAlias[] @relation("AliasStore")
+  categories  StoreCategory[]
+}
+
+model Category {
+  id     String @id @default(uuid())
+  name   String @unique
+  stores StoreCategory[]
+}
+
+model StoreCategory {
+  id         String   @id @default(uuid())
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeId    String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId String
+
+  @@unique([storeId, categoryId])
 }
 
 // Current score (latest value, one per store+program)

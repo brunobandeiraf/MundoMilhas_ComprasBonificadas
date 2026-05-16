@@ -6,6 +6,7 @@ import {
   updateProgram,
   toggleUserStatus,
   deleteUser,
+  updateUser,
   runCrawler,
   runCrawlerForProgram,
   getCrawlerSchedule,
@@ -27,6 +28,15 @@ import UserForm from '../components/UserForm'
 type Tab = 'users' | 'stores' | 'crawler' | 'history' | 'programs'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const hrs = Math.floor(seconds / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`
+  return `${mins}m ${secs}s`
+}
 
 interface CrawlerLog {
   timestamp: string
@@ -61,6 +71,8 @@ export default function AdminPage() {
   const [crawlerRunning, setCrawlerRunning] = useState(false)
   const [crawlerRunningProgram, setCrawlerRunningProgram] = useState<string | null>(null)
   const [runningPrograms, setRunningPrograms] = useState<string[]>([])
+  const [crawlerProgress, setCrawlerProgress] = useState<Record<string, { current: number; total: number }>>({})
+  const [crawlerStartTimes, setCrawlerStartTimes] = useState<Record<string, number>>({})
 
   const [programName, setProgramName] = useState('')
   const [programUrl, setProgramUrl] = useState('')
@@ -120,17 +132,19 @@ export default function AdminPage() {
 
   useEffect(() => { loadUsers(); loadPrograms(); loadSchedule(); loadHistory() }, [loadUsers, loadPrograms, loadSchedule, loadHistory])
 
-  // Poll crawler status every 5 seconds
+  // Poll crawler status every 5 seconds + refresh program store counts
   useEffect(() => {
     const checkStatus = () => {
       getCrawlerStatus().then((data) => {
         setRunningPrograms(data.running)
+        setCrawlerProgress(data.progress || {})
+        setCrawlerStartTimes(data.startTimes || {})
       }).catch(() => {})
     }
     checkStatus()
     const interval = setInterval(checkStatus, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [loadPrograms])
   useEffect(() => { if (activeTab === 'history') loadHistory() }, [activeTab, loadHistory])
 
   async function handleSaveSchedule() {
@@ -327,7 +341,11 @@ export default function AdminPage() {
                       return (
                         <div key={program.id} className="crawler-program-item">
                           <div className="crawler-program-info">
-                            <span className="crawler-program-name">{program.name}</span>
+                            <span className="crawler-program-name">{program.name} <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 400 }}>
+                              {crawlerProgress[program.id]
+                                ? `(${crawlerProgress[program.id].current}/${crawlerProgress[program.id].total})`
+                                : `(${program.storeCount ?? 0} lojas)`}
+                            </span></span>
                             {last && (
                               <span className="crawler-program-last">
                                 Última: {new Date(last.completedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
@@ -375,18 +393,50 @@ export default function AdminPage() {
                   </div>
                 </div>
               )}
-              {crawlerLogs.length > 0 && (
-                <div className="crawler-logs">
-                  <div className="crawler-logs__container">
-                    {crawlerLogs.map((log, idx) => (
+              {/* Terminal de logs - sempre visível */}
+              <div className="crawler-logs" style={{ marginTop: '1.5rem' }}>
+                <h3>Terminal</h3>
+                <div className="crawler-logs__container">
+                  {/* Show running programs at the top */}
+                  {runningPrograms.length > 0 && (
+                    <div className="crawler-log crawler-log--info">
+                      <span className="crawler-log__time">⏳</span>
+                      <span className="crawler-log__msg">
+                        Em execução: {programs.filter(p => runningPrograms.includes(p.id)).map(p => {
+                          const prog = crawlerProgress[p.id]
+                          return prog ? `${p.name} (${prog.current}/${prog.total})` : p.name
+                        }).join(', ')}
+                      </span>
+                    </div>
+                  )}
+                  {crawlerLogs.length > 0 ? (
+                    crawlerLogs.map((log, idx) => (
                       <div key={idx} className={`crawler-log crawler-log--${log.type}`}>
                         <span className="crawler-log__time">{log.timestamp}</span>
                         <span className="crawler-log__msg">{log.message}</span>
                       </div>
-                    ))}
-                  </div>
+                    ))
+                  ) : history.length > 0 ? (
+                    history.slice(0, 10).map((log) => {
+                      const time = new Date(log.completedAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+                      const isSuccess = log.status === 'success'
+                      return (
+                        <div key={log.id} className={`crawler-log crawler-log--${isSuccess ? 'success' : 'error'}`}>
+                          <span className="crawler-log__time">{time}</span>
+                          <span className="crawler-log__msg">
+                            {isSuccess ? '✓' : '✗'} {log.programName}: {isSuccess ? `${log.storesFound} lojas` : log.errorMessage}
+                          </span>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <div className="crawler-log crawler-log--info">
+                      <span className="crawler-log__time">--:--:--</span>
+                      <span className="crawler-log__msg">Nenhuma execução registrada.</span>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           </div>
         )}
@@ -423,7 +473,7 @@ export default function AdminPage() {
                     <div key={p.id} className={`program-card ${!p.isActive ? 'program-card--inactive' : ''}`}>
                       <div className="program-card__main">
                         <div className="program-card__info">
-                          <span className="program-card__name">{p.name}</span>
+                          <span className="program-card__name">{p.name} <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 400 }}>({p.storeCount ?? 0} lojas)</span></span>
                           {editingProgram === p.id ? (
                             <div className="program-card__edit-url">
                               <input
@@ -468,6 +518,16 @@ export default function AdminPage() {
           <div className="admin-panel">
             <div className="admin-panel__section">
               <h2>Histórico de Execuções</h2>
+
+              {/* Running status */}
+              {runningPrograms.length > 0 && (
+                <div className="info-message" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="spinner-small" style={{ borderTopColor: '#1a73e8', borderColor: '#e5e7eb' }} />
+                  Em execução: <strong>{programs.filter(p => runningPrograms.includes(p.id)).map(p => p.name).join(', ')}</strong>
+                  <RunningTimer startTime={Object.values(crawlerStartTimes)[0]} />
+                </div>
+              )}
+
               {historyLoading ? <p className="admin-loading">Carregando...</p> : history.length === 0 ? <p className="admin-empty">Nenhuma execução.</p> : (
                 <>
                   <p className="stores-showing" style={{ marginBottom: '1rem' }}>
@@ -487,7 +547,7 @@ export default function AdminPage() {
                               <td className="td-bold">{log.programName}</td>
                               <td><span className={`badge ${log.status === 'success' ? 'badge--active' : 'badge--error'}`}>{log.status === 'success' ? '✓' : '✗'}</span></td>
                               <td>{log.storesFound}</td>
-                              <td>{duration}s</td>
+                              <td>{formatDuration(duration)}</td>
                               <td>{log.errorMessage || '—'}</td>
                             </tr>
                           )
@@ -611,11 +671,10 @@ function UsersTab({
                 </div>
                 {selectedUser?.id === user.id && (
                   <div className="user-card__details">
-                    <div className="user-card__detail-row"><span className="user-card__detail-label">E-mail</span><span className="user-card__detail-value">{user.email}</span></div>
-                    <div className="user-card__detail-row"><span className="user-card__detail-label">Nome</span><span className="user-card__detail-value">{user.name || 'Não informado'}</span></div>
-                    <div className="user-card__detail-row"><span className="user-card__detail-label">Telefone</span><span className="user-card__detail-value">{user.phone || 'Não informado'}</span></div>
-                    <div className="user-card__detail-row"><span className="user-card__detail-label">Role</span><span className="user-card__detail-value">{user.role}</span></div>
-                    <div className="user-card__detail-row"><span className="user-card__detail-label">Cadastrado em</span><span className="user-card__detail-value">{new Date(user.createdAt).toLocaleDateString('pt-BR')}</span></div>
+                    <UserEditPanel user={user} onSave={(updated) => {
+                      setUsers((prev: UserItem[]) => prev.map((u: UserItem) => u.id === updated.id ? updated : u))
+                      setSelectedUser(updated)
+                    }} />
                   </div>
                 )}
               </div>
@@ -662,13 +721,13 @@ function StoresManagementTab() {
   useEffect(() => { loadStores(); loadAliases() }, [loadStores, loadAliases])
 
   // Get unique categories and programs from stores
-  const allCategories = [...new Set(stores.map(s => s.category).filter(Boolean))] as string[]
+  const allCategories = [...new Set(stores.flatMap(s => s.categories))]
   const allPrograms = [...new Set(stores.flatMap(s => s.programs))]
 
   const filteredStores = stores.filter((s) => {
     if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false
     if (filterProgram && !s.programs.includes(filterProgram)) return false
-    if (filterCategory && s.category !== filterCategory) return false
+    if (filterCategory && !s.categories.includes(filterCategory)) return false
     return true
   })
   const totalPages = Math.ceil(filteredStores.length / limit)
@@ -676,10 +735,11 @@ function StoresManagementTab() {
 
   async function handleSaveCategory(storeId: string) {
     try {
-      await updateStoreCategory(storeId, categoryInput)
-      setStores((prev) => prev.map((s) => s.id === storeId ? { ...s, category: categoryInput } : s))
+      const cats = categoryInput.split(',').map(c => c.trim()).filter(Boolean)
+      await updateStoreCategory(storeId, cats)
+      setStores((prev) => prev.map((s) => s.id === storeId ? { ...s, categories: cats } : s))
       setEditingCategory(null)
-      setMessage('Categoria atualizada.')
+      setMessage('Categorias atualizadas.')
       setTimeout(() => setMessage(''), 3000)
     } catch {}
   }
@@ -757,19 +817,34 @@ function StoresManagementTab() {
                       <td className="td-bold">{store.name}</td>
                       <td>
                         {editingCategory === store.id ? (
-                          <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-                            <select value={categoryInput} onChange={(e) => setCategoryInput(e.target.value)}
-                              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid #ccc', borderRadius: '4px' }}>
-                              <option value="">Selecione...</option>
-                              {allCategories.sort().map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                            <button onClick={() => handleSaveCategory(store.id)} className="btn-save-url" disabled={!categoryInput}>OK</button>
-                            <button onClick={() => setEditingCategory(null)} className="btn-cancel-url">✕</button>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                              {allCategories.filter(c => c !== 'Outros').sort().map(c => {
+                                const selected = categoryInput.split(',').map(s => s.trim()).includes(c)
+                                return (
+                                  <button key={c} onClick={() => {
+                                    const current = categoryInput.split(',').map(s => s.trim()).filter(Boolean)
+                                    if (selected) {
+                                      setCategoryInput(current.filter(x => x !== c).join(', '))
+                                    } else {
+                                      setCategoryInput([...current, c].join(', '))
+                                    }
+                                  }} style={{
+                                    padding: '0.2rem 0.4rem', fontSize: '0.625rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid',
+                                    background: selected ? '#1a73e8' : '#fff', color: selected ? '#fff' : '#333', borderColor: selected ? '#1a73e8' : '#ccc'
+                                  }}>{c}</button>
+                                )
+                              })}
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.25rem' }}>
+                              <button onClick={() => handleSaveCategory(store.id)} className="btn-save-url">Salvar</button>
+                              <button onClick={() => setEditingCategory(null)} className="btn-cancel-url">✕</button>
+                            </div>
                           </div>
                         ) : (
-                          <span onClick={() => { setEditingCategory(store.id); setCategoryInput(store.category || '') }}
+                          <span onClick={() => { setEditingCategory(store.id); setCategoryInput(store.categories.join(', ')) }}
                             style={{ cursor: 'pointer', borderBottom: '1px dashed #ccc' }} title="Clique para alterar">
-                            {store.category || '—'}
+                            {store.categories.length > 0 ? store.categories.join(', ') : '—'}
                           </span>
                         )}
                       </td>
@@ -890,6 +965,100 @@ function StoresManagementTab() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// Timer component that shows elapsed time since crawler started
+function RunningTimer({ startTime }: { startTime?: number }) {
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    const update = () => {
+      if (startTime) {
+        setElapsed(Math.floor((Date.now() - startTime) / 1000))
+      }
+    }
+    update()
+    const interval = setInterval(update, 1000)
+    return () => clearInterval(interval)
+  }, [startTime])
+
+  const mins = Math.floor(elapsed / 60)
+  const secs = elapsed % 60
+
+  return (
+    <span style={{ marginLeft: 'auto', fontFamily: 'monospace', fontSize: '0.875rem', fontWeight: 600 }}>
+      {String(mins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
+    </span>
+  )
+}
+
+// User Edit Panel
+function UserEditPanel({ user, onSave }: { user: UserItem; onSave: (u: UserItem) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(user.name || '')
+  const [phone, setPhone] = useState(user.phone || '')
+  const [email, setEmail] = useState(user.email)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  async function handleSave() {
+    setSaving(true)
+    setMsg('')
+    try {
+      const updated = await updateUser(user.id, { name, phone, email })
+      onSave(updated)
+      setEditing(false)
+      setMsg('Salvo!')
+      setTimeout(() => setMsg(''), 2000)
+    } catch (err) {
+      setMsg(err instanceof ApiResponseError ? err.message : 'Erro ao salvar')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!editing) {
+    return (
+      <>
+        <div className="user-card__detail-row"><span className="user-card__detail-label">E-mail</span><span className="user-card__detail-value">{user.email}</span></div>
+        <div className="user-card__detail-row"><span className="user-card__detail-label">Nome</span><span className="user-card__detail-value">{user.name || 'Não informado'}</span></div>
+        <div className="user-card__detail-row"><span className="user-card__detail-label">Telefone</span><span className="user-card__detail-value">{user.phone || 'Não informado'}</span></div>
+        <div className="user-card__detail-row"><span className="user-card__detail-label">Role</span><span className="user-card__detail-value">{user.role}</span></div>
+        <div className="user-card__detail-row"><span className="user-card__detail-label">Cadastrado em</span><span className="user-card__detail-value">{new Date(user.createdAt).toLocaleDateString('pt-BR')}</span></div>
+        <button onClick={(e) => { e.stopPropagation(); setEditing(true) }} className="btn-crawler-small" style={{ marginTop: '0.75rem' }}>
+          ✎ Editar
+        </button>
+        {msg && <span style={{ fontSize: '0.75rem', color: '#16a34a', marginLeft: '0.5rem' }}>{msg}</span>}
+      </>
+    )
+  }
+
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: '#6b7280' }}>E-mail</label>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+          style={{ width: '100%', padding: '0.4rem 0.6rem', fontSize: '0.8125rem', border: '1.5px solid #e5e7eb', borderRadius: '6px' }} />
+      </div>
+      <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: '#6b7280' }}>Nome</label>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do usuário"
+          style={{ width: '100%', padding: '0.4rem 0.6rem', fontSize: '0.8125rem', border: '1.5px solid #e5e7eb', borderRadius: '6px' }} />
+      </div>
+      <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: '#6b7280' }}>Telefone</label>
+        <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone"
+          style={{ width: '100%', padding: '0.4rem 0.6rem', fontSize: '0.8125rem', border: '1.5px solid #e5e7eb', borderRadius: '6px' }} />
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button onClick={handleSave} disabled={saving} className="btn-crawler-small">
+          {saving ? '...' : '✓ Salvar'}
+        </button>
+        <button onClick={() => setEditing(false)} className="btn-cancel-url">Cancelar</button>
+      </div>
+      {msg && <span style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.25rem', display: 'block' }}>{msg}</span>}
     </div>
   )
 }

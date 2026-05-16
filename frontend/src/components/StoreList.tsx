@@ -91,7 +91,7 @@ export default function StoreList({ stores }: StoreListProps) {
                           role="button"
                           tabIndex={0}
                         >
-                          <span className="store-card__program-name">{s.programName}</span>
+                          <span className={`store-card__program-name program-color--${s.programName.toLowerCase()}`}>{s.programName}</span>
                           <span className="store-card__program-score">
                             {s.score} pontos por R$ 1
                           </span>
@@ -159,6 +159,8 @@ export default function StoreList({ stores }: StoreListProps) {
 }
 
 function ScoreChart({ history }: { history: Array<{ date: string; score: number }> }) {
+  const [tooltip, setTooltip] = useState<{ x: number; score: number; date: string } | null>(null)
+
   if (history.length === 0) return null
 
   const maxScore = Math.max(...history.map((h) => h.score))
@@ -180,7 +182,7 @@ function ScoreChart({ history }: { history: Array<{ date: string; score: number 
     .join(' ')
 
   return (
-    <div className="score-chart">
+    <div className="score-chart" style={{ position: 'relative' }}>
       <div className="score-chart__labels">
         <span>{maxScore}</span>
         <span>{minScore}</span>
@@ -188,9 +190,24 @@ function ScoreChart({ history }: { history: Array<{ date: string; score: number 
       <svg viewBox={`0 0 ${width} ${height}`} className="score-chart__svg" preserveAspectRatio="none">
         <path d={pathD} fill="none" stroke="#1a73e8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         {points.map((p, i) => (
-          <circle key={i} cx={p.x} cy={p.y} r="1.5" fill="#1a73e8" />
+          <circle
+            key={i}
+            cx={p.x}
+            cy={p.y}
+            r="2.5"
+            fill="#1a73e8"
+            style={{ cursor: 'pointer' }}
+            onMouseEnter={() => setTooltip({ x: p.x, score: p.score, date: p.date })}
+            onMouseLeave={() => setTooltip(null)}
+          />
         ))}
       </svg>
+      {tooltip && (
+        <div className="score-chart__tooltip" style={{ left: `calc(${tooltip.x}% + 1rem)` }}>
+          <strong>{tooltip.score} pts</strong>
+          <span>{tooltip.date}</span>
+        </div>
+      )}
       <div className="score-chart__dates">
         <span>{history[0]?.date}</span>
         <span>{history[history.length - 1]?.date}</span>

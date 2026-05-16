@@ -84,8 +84,13 @@ export const storeService = {
       // Name filter
       if (searchLower && !store.name.toLowerCase().includes(searchLower)) continue
 
-      // Category filter
-      if (filters.category && store.category !== filters.category) continue
+      // Category filter (N:N relation)
+      if (filters.category) {
+        const storeHasCat = await db.storeCategory.findFirst({
+          where: { storeId: store.id, category: { name: filters.category } },
+        })
+        if (!storeHasCat) continue
+      }
 
       // Program filter
       if (filters.program) {
@@ -162,12 +167,8 @@ export const storeService = {
   },
 
   async listCategories(): Promise<string[]> {
-    const stores = await db.store.findMany({
-      where: { category: { not: null } },
-      select: { category: true },
-    })
-    const categories = [...new Set(stores.map((s) => s.category!).filter(Boolean))]
-    return categories.sort()
+    const categories = await db.category.findMany({ orderBy: { name: 'asc' } })
+    return categories.map(c => c.name)
   },
 
   async getStoreDetails(storeId: string) {
@@ -181,10 +182,29 @@ export const storeService = {
           orderBy: { date: 'asc' },
           include: { program: true },
         },
+        primaryAliases: {
+          include: {
+            aliasStore: {
+              include: {
+                scores: { include: { program: true } },
+                history: { orderBy: { date: 'asc' }, include: { program: true } },
+              },
+            },
+          },
+        },
       },
     })
 
     if (!store) return null
+
+    // Merge scores from aliases
+    const allScores = [...store.scores]
+    const allHistory = [...store.history]
+    for (const alias of store.primaryAliases) {
+      allScores.push(...alias.aliasStore.scores)
+      allHistory.push(...alias.aliasStore.history)
+    }
+    allHistory.sort((a, b) => a.date.localeCompare(b.date))
 
     return {
       id: store.id,
@@ -193,7 +213,7 @@ export const storeService = {
       category: store.category,
       description: store.description,
       link: store.link,
-      scores: store.scores.map((s) => ({
+      scores: allScores.map((s) => ({
         programName: s.program.name,
         score: s.score,
         description: s.description,
@@ -201,7 +221,7 @@ export const storeService = {
         deadline: s.deadline,
         link: s.link,
       })),
-      history: store.history.map((h) => ({
+      history: allHistory.map((h) => ({
         date: h.date,
         score: h.score,
         programName: h.program.name,

@@ -69,6 +69,16 @@ export const crawlerService = {
   isRunning: new Set<string>(),
 
   /**
+   * Track progress: { programId: { current, total } }
+   */
+  progress: new Map<string, { current: number; total: number }>(),
+
+  /**
+   * Track start time of each running program
+   */
+  startTimes: new Map<string, number>(),
+
+  /**
    * Run crawlers for all active programs.
    * Livelo always runs first (other programs depend on its stores being created first).
    */
@@ -114,6 +124,7 @@ export const crawlerService = {
     }
 
     crawlerService.isRunning.add(programId)
+    crawlerService.startTimes.set(programId, Date.now())
     const startedAt = new Date()
 
     try {
@@ -183,34 +194,51 @@ export const crawlerService = {
 
       // Process results: upsert stores and update scores
       const storeNames: string[] = []
+      const total = scraperResults.length
+      let current = 0
+
+      crawlerService.progress.set(programId, { current: 0, total })
 
       for (const item of scraperResults) {
-        // Check if store already exists
-        const existingStore = await db.store.findFirst({
-          where: { name: item.storeName },
-        })
+        current++
+        crawlerService.progress.set(programId, { current, total })
 
-        // Upsert store - only set category if store is new or has no category
-        // New stores from non-Livelo programs get "Outros" as default category
-        const defaultCategory = existingStore?.category || item.category || 'Outros'
-
+        // Upsert store
         const store = await db.store.upsert({
           where: { name: item.storeName },
           create: {
             name: item.storeName,
             imageUrl: item.imageUrl || null,
-            category: item.category || 'Outros',
             description: item.description || null,
             link: item.link || null,
           },
           update: {
             updatedAt: new Date(),
             imageUrl: item.imageUrl || undefined,
-            // Never overwrite existing category
             description: item.description || undefined,
             link: item.link || undefined,
           },
         })
+
+        // Assign categories if provided and store has none yet
+        if (item.category) {
+          const storeHasCategories = await db.storeCategory.count({ where: { storeId: store.id } })
+          if (storeHasCategories === 0) {
+            const categories = item.category.split(',').map(c => c.trim()).filter(Boolean)
+            for (const catName of categories) {
+              const cat = await db.category.upsert({
+                where: { name: catName },
+                create: { name: catName },
+                update: {},
+              })
+              await db.storeCategory.upsert({
+                where: { storeId_categoryId: { storeId: store.id, categoryId: cat.id } },
+                create: { storeId: store.id, categoryId: cat.id },
+                update: {},
+              })
+            }
+          }
+        }
 
         // Upsert current score
         await db.bonusScore.upsert({
@@ -336,6 +364,8 @@ export const crawlerService = {
     }
     } finally {
       crawlerService.isRunning.delete(programId)
+      crawlerService.progress.delete(programId)
+      crawlerService.startTimes.delete(programId)
     }
   },
 }

@@ -78,19 +78,27 @@ export class LiveloScraper implements BaseScraper {
 
       console.log(`[LiveloScraper] ${results.length} lojas encontradas.`)
 
-      // Only fetch categories on first run (when no stores have categories yet)
+      // Only fetch categories on first run (when no stores have specific categories)
       const { db } = await import('../../config/database.js')
-      const storesWithCategory = await db.store.count({ where: { category: { not: null } } })
-      if (storesWithCategory === 0) {
-        console.log('[LiveloScraper] Primeira execução — buscando categorias...')
-        await this.assignCategories(page, results)
+      const storesWithSpecificCat = await db.store.count({
+        where: { AND: [{ category: { not: null } }, { category: { not: 'Outros' } }] },
+      })
+      if (storesWithSpecificCat === 0) {
+        console.log('[LiveloScraper] Primeira execução — atribuindo categorias por palavras-chave...')
+        await this.assignCategoriesByKeywords(results)
       } else {
-        console.log(`[LiveloScraper] Categorias já mapeadas (${storesWithCategory} lojas). Pulando.`)
+        console.log(`[LiveloScraper] Categorias já mapeadas (${storesWithSpecificCat} lojas). Pulando.`)
       }
 
       console.log(`[LiveloScraper] Buscando detalhes...`)
 
       // Fetch details for each store that has a link
+      // Report progress to crawlerService
+      const { crawlerService } = await import('../../services/crawler.service.js')
+      const { db: prismaDb } = await import('../../config/database.js')
+      const liveloProgram = await prismaDb.loyaltyProgram.findFirst({ where: { name: 'Livelo' } })
+      const totalWithLink = results.filter(r => r.link).length
+
       let detailsCount = 0
       for (const store of results) {
         if (!store.link) continue
@@ -100,8 +108,12 @@ export class LiveloScraper implements BaseScraper {
           if (details.rule) store.rule = details.rule
           if (details.deadline) store.deadline = details.deadline
           detailsCount++
+          // Update progress for frontend
+          if (liveloProgram) {
+            crawlerService.progress.set(liveloProgram.id, { current: detailsCount, total: totalWithLink })
+          }
           if (detailsCount % 20 === 0) {
-            console.log(`[LiveloScraper] Detalhes: ${detailsCount}/${results.filter(r => r.link).length}`)
+            console.log(`[LiveloScraper] Detalhes: ${detailsCount}/${totalWithLink}`)
           }
         } catch {
           // Skip if details fetch fails for a store
@@ -388,6 +400,187 @@ export class LiveloScraper implements BaseScraper {
     })
 
     return results
+  }
+
+  /**
+   * Assign categories by interacting with the Livelo category combobox.
+   * Opens the dropdown, reads categories, clicks each one, and maps stores.
+   * Falls back to keyword-based assignment for uncategorized stores.
+   */
+  private async assignCategoriesFromSite(page: Page, results: ScraperResult[]): Promise<void> {
+    try {
+      // Navigate back to the main page
+      await page.goto(this.url, { waitUntil: 'networkidle2', timeout: 60_000 })
+      await new Promise((r) => setTimeout(r, 5000))
+
+      // Click the category combobox to open it
+      const combobox = await page.$('[data-testid="TextInput_SelectField"]')
+      if (!combobox) {
+        console.log('[LiveloScraper] Combobox de categorias não encontrado. Usando palavras-chave.')
+        await this.assignCategoriesByKeywords(results)
+        return
+      }
+
+      await combobox.click()
+      await new Promise((r) => setTimeout(r, 1500))
+
+      // Read all category options
+      const categoryOptions = await page.evaluate(() => {
+        const options: string[] = []
+        const items = document.querySelectorAll('[role="option"], [data-testid*="option"], [class*="option"]')
+        for (const item of items) {
+          const text = (item.textContent || '').trim()
+          if (text && text !== 'Ver todos' && text.length < 50) {
+            options.push(text)
+          }
+        }
+        return options
+      })
+
+      if (categoryOptions.length === 0) {
+        console.log('[LiveloScraper] Nenhuma opção de categoria encontrada. Usando palavras-chave.')
+        // Close dropdown
+        await page.keyboard.press('Escape')
+        await this.assignCategoriesByKeywords(results)
+        return
+      }
+
+      console.log(`[LiveloScraper] ${categoryOptions.length} categorias encontradas: ${categoryOptions.join(', ')}`)
+
+      // Close dropdown first
+      await page.keyboard.press('Escape')
+      await new Promise((r) => setTimeout(r, 500))
+
+      // For each category, select it and see which stores appear
+      for (const categoryName of categoryOptions) {
+        try {
+          // Click combobox
+          await combobox.click()
+          await new Promise((r) => setTimeout(r, 1000))
+
+          // Click the category option
+          await page.evaluate((catName) => {
+            const items = document.querySelectorAll('[role="option"], [data-testid*="option"], [class*="option"]')
+            for (const item of items) {
+              if ((item.textContent || '').trim() === catName) {
+                (item as HTMLElement).click()
+                return
+              }
+            }
+          }, categoryName)
+
+          await new Promise((r) => setTimeout(r, 2000))
+
+          // Scroll to load all stores in this category
+          await this.scrollToBottom(page)
+
+          // Get visible store names
+          const visibleStores = await page.evaluate(() => {
+            const names: string[] = []
+            const imgs = document.querySelectorAll('[data-testid="img_PartnerCard_partnerImage"]')
+            for (const img of imgs) {
+              let name = (img.getAttribute('alt') || '').trim()
+              if (name.toLowerCase().startsWith('logo ')) name = name.slice(5).trim()
+              if (name) names.push(name)
+            }
+            return names
+          })
+
+          // Assign category to matching stores
+          for (const store of results) {
+            if (!store.category || store.category === 'Outros') {
+              const match = visibleStores.some(
+                (v) => v.toLowerCase() === store.storeName.toLowerCase()
+              )
+              if (match) {
+                store.category = categoryName
+              }
+            }
+          }
+
+          console.log(`[LiveloScraper] Categoria "${categoryName}": ${visibleStores.length} lojas`)
+        } catch {
+          // Skip this category if it fails
+        }
+      }
+
+      // Reset to "Ver todos"
+      try {
+        await combobox.click()
+        await new Promise((r) => setTimeout(r, 1000))
+        await page.evaluate(() => {
+          const items = document.querySelectorAll('[role="option"], [data-testid*="option"], [class*="option"]')
+          for (const item of items) {
+            if ((item.textContent || '').trim() === 'Ver todos') {
+              (item as HTMLElement).click()
+              return
+            }
+          }
+        })
+      } catch {}
+
+      // Assign "Outros" to remaining uncategorized stores
+      let categorized = 0
+      for (const store of results) {
+        if (store.category && store.category !== 'Outros') categorized++
+        if (!store.category) store.category = 'Outros'
+      }
+
+      console.log(`[LiveloScraper] Categorias do site: ${categorized} lojas categorizadas, ${results.length - categorized} como "Outros"`)
+
+      // If very few were categorized from site, supplement with keywords
+      if (categorized < 30) {
+        console.log('[LiveloScraper] Poucas categorias do site. Complementando com palavras-chave...')
+        await this.assignCategoriesByKeywords(results)
+      }
+    } catch (error) {
+      console.warn('[LiveloScraper] Erro ao buscar categorias do site:', error instanceof Error ? error.message : error)
+      console.log('[LiveloScraper] Usando categorias por palavras-chave como fallback.')
+      await this.assignCategoriesByKeywords(results)
+    }
+  }
+
+  /**
+   * Assign categories based on store name keywords (reliable, no site interaction needed).
+   */
+  private async assignCategoriesByKeywords(results: ScraperResult[]): Promise<void> {
+    const categoryMap: Record<string, string[]> = {
+      'Moda': ['Adidas', 'Nike', 'Zara', 'C&A', 'Renner', 'Riachuelo', 'Shein', 'Dafiti', 'Netshoes', 'Centauro', 'Puma', 'Arezzo', 'Havaianas', 'Hering', 'Levi', 'Calvin Klein', 'Lacoste', 'Tommy', 'Reserva', 'Amaro', 'Shoulder', 'Farm', 'Animale', 'Osklen', 'Melissa', 'Vans', 'New Balance', 'Asics', 'Under Armour', 'Mizuno', 'Olympikus', 'Lupo', 'Track&Field', 'Youcom', 'Marisa', 'Posthaus', 'Privalia', 'Off Premium', 'Kanui', 'Tricae', 'Zattini', 'Vivara', 'Pandora', 'Swarovski', 'Ray-Ban', 'Oakley', 'Chilli Beans', 'Havan', 'Riachuelo', 'Lojas Renner', 'Centauro', 'World Tennis', 'Passarela', 'Dafiti', 'Restoque', 'Le Lis', 'Bo.Bô', 'John John', 'Ellus', 'Colcci', 'Forum', 'Morena Rosa', 'Lança Perfume'],
+      'Eletrônicos': ['Samsung', 'Apple', 'Dell', 'Lenovo', 'HP', 'Multilaser', 'Positivo', 'LG', 'Sony', 'JBL', 'Bose', 'Philips', 'Motorola', 'Xiaomi', 'Huawei', 'Asus', 'Acer', 'Kabum', 'Pichau', 'Terabyte', 'Fast Shop', 'Girafa', 'Consul', 'Brastemp', 'Electrolux'],
+      'Casa e Decoração': ['Tok&Stok', 'Etna', 'MadeiraMadeira', 'Leroy Merlin', 'Telhanorte', 'Camicado', 'Tramontina', 'Mondial', 'Britânia', 'Polishop', 'Mobly', 'Westwing', 'Shoptime', 'TendTudo', 'Zelo', 'Buddemeyer'],
+      'Beleza': ['O Boticário', 'Boticário', 'Natura', 'Sephora', 'MAC', 'Avon', 'Eudora', 'Quem Disse Berenice', 'Beleza na Web', 'Época Cosméticos', 'The Body Shop', "L'Occitane", 'Dermage', 'Vult', 'Salon Line', 'Loccitane', 'Granado', 'Phytoervas', 'Bio Extratus'],
+      'Supermercado': ['Carrefour', 'Extra', 'Pão de Açúcar', 'GPA', 'iFood', 'Rappi', 'Zé Delivery', 'James Delivery', 'Mambo'],
+      'Viagens': ['Booking', 'Decolar', 'CVC', 'Hurb', 'Submarino Viagens', 'Latam', 'Gol', 'Azul', 'Airbnb', 'Hotels.com', 'Expedia', 'Rentcars', 'Localiza', 'Movida', 'Unidas', 'Smiles', 'Passagens Promo', '123milhas', 'MaxMilhas', 'Vai de Promo'],
+      'Saúde e Bem-estar': ['Drogasil', 'Droga Raia', 'Panvel', 'Pague Menos', 'Ultrafarma', 'Drogaria São Paulo', 'Onofre', 'Netfarma', 'Growth', 'Integral Médica', 'Drogaria', 'Farmácia', 'Farma'],
+      'Esporte e Lazer': ['Centauro', 'Netshoes', 'Decathlon', 'Bike', 'Surf', 'Fitness', 'Academia'],
+      'Marketplace': ['Shopee', 'Amazon', 'Mercado Livre', 'Magazine Luiza', 'Magalu', 'Americanas', 'Submarino', 'Casas Bahia', 'Ponto', 'AliExpress', 'Wish', 'Shoptime'],
+      'Alimentação': ['iFood', 'Rappi', 'Zé Delivery', 'Wine', 'Evino', 'Grand Cru', 'Nespresso', 'Dolce Gusto', 'Nestlé', 'Empório', 'Café'],
+      'Pet': ['Petz', 'Cobasi', 'Petlove', 'DogHero', 'Pet'],
+      'Infantil': ['Ri Happy', 'PBKids', 'Lego', 'Disney', 'Tricae', 'Baby', 'Kids', 'Infantil'],
+      'Livros e Educação': ['Saraiva', 'Cultura', 'Estante Virtual', 'Udemy', 'Alura', 'Hotmart', 'Livro'],
+      'Serviços': ['Uber', '99', 'Sem Parar', 'ConectCar', 'Vivo', 'Claro', 'Tim', 'Oi', 'NET', 'Sky', 'Porto Seguro', 'Seguro'],
+      'Automotivo': ['Auto', 'Pneu', 'Carro', 'Moto', 'Combustível', 'Shell', 'Ipiranga'],
+    }
+
+    let categorized = 0
+    for (const store of results) {
+      const nameLower = store.storeName.toLowerCase()
+      const matchedCategories: string[] = []
+
+      for (const [category, keywords] of Object.entries(categoryMap)) {
+        if (keywords.some((kw) => nameLower.includes(kw.toLowerCase()))) {
+          matchedCategories.push(category)
+        }
+      }
+
+      if (matchedCategories.length > 0) {
+        store.category = matchedCategories.join(', ')
+        categorized++
+      } else {
+        store.category = 'Outros'
+      }
+    }
+    console.log(`[LiveloScraper] Categorias atribuídas: ${categorized} específicas, ${results.length - categorized} como "Outros"`)
   }
 
   /**

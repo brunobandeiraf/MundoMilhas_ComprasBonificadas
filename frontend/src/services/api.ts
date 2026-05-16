@@ -258,6 +258,14 @@ export async function toggleUserStatus(userId: string): Promise<UserItem> {
   return handleResponse<UserItem>(response)
 }
 
+export async function updateUser(userId: string, data: { name?: string; phone?: string; email?: string }): Promise<UserItem> {
+  const response = await fetchWithAuth(`/admin/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  })
+  return handleResponse<UserItem>(response)
+}
+
 export async function deleteUser(userId: string): Promise<void> {
   const response = await fetchWithAuth(`/admin/users/${userId}`, { method: 'DELETE' })
   await handleResponse(response)
@@ -269,6 +277,7 @@ export interface ProgramItem {
   url: string
   isActive: boolean
   createdAt: string
+  storeCount?: number
 }
 
 export async function getPrograms(): Promise<ProgramItem[]> {
@@ -321,9 +330,9 @@ export async function getCrawlerSchedule(): Promise<{ schedule: string }> {
   return handleResponse<{ schedule: string }>(response)
 }
 
-export async function getCrawlerStatus(): Promise<{ running: string[] }> {
+export async function getCrawlerStatus(): Promise<{ running: string[]; progress: Record<string, { current: number; total: number }>; startTimes: Record<string, number> }> {
   const response = await fetchWithAuth('/admin/crawler/status')
-  return handleResponse<{ running: string[] }>(response)
+  return handleResponse<{ running: string[]; progress: Record<string, { current: number; total: number }>; startTimes: Record<string, number> }>(response)
 }
 
 export async function updateCrawlerSchedule(schedule: string): Promise<void> {
@@ -354,7 +363,7 @@ export async function getCrawlerHistory(): Promise<CrawlLogItem[]> {
 export interface AdminStoreItem {
   id: string
   name: string
-  category: string | null
+  categories: string[]
   imageUrl: string | null
   programs: string[]
 }
@@ -364,10 +373,10 @@ export async function getAdminStores(): Promise<AdminStoreItem[]> {
   return handleResponse<AdminStoreItem[]>(response)
 }
 
-export async function updateStoreCategory(storeId: string, category: string): Promise<void> {
+export async function updateStoreCategory(storeId: string, categories: string[]): Promise<void> {
   const response = await fetchWithAuth(`/admin/stores/${storeId}/category`, {
     method: 'PATCH',
-    body: JSON.stringify({ category }),
+    body: JSON.stringify({ categories }),
   })
   await handleResponse(response)
 }

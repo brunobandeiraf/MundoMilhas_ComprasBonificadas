@@ -74,6 +74,22 @@ export class EsferaScraper implements BaseScraper {
 
       console.log(`[EsferaScraper] ${results.length} lojas encontradas.`)
 
+      // Assign categories from Esfera site for new stores (first run only)
+      try {
+        const { db } = await import('../../config/database.js')
+        // Check if there are new stores (not yet in the database)
+        const existingStores = await db.store.findMany({ select: { name: true } })
+        const existingNames = new Set(existingStores.map((s: { name: string }) => s.name.toLowerCase()))
+        const newStores = results.filter(r => !existingNames.has(r.storeName.toLowerCase()))
+
+        if (newStores.length > 0) {
+          console.log(`[EsferaScraper] ${newStores.length} lojas novas. Buscando categorias do site...`)
+          await this.assignCategoriesFromSite(page, results, existingNames)
+        }
+      } catch (catError) {
+        console.warn('[EsferaScraper] Erro ao buscar categorias:', catError instanceof Error ? catError.message : catError)
+      }
+
       // Only fetch details on first run - wrapped in try/catch so failures don't lose store data
       try {
         const { db } = await import('../../config/database.js')
@@ -122,9 +138,6 @@ export class EsferaScraper implements BaseScraper {
       } catch (detailsError) {
         console.warn('[EsferaScraper] Erro ao buscar detalhes (lojas serão salvas sem regras):', detailsError instanceof Error ? detailsError.message : detailsError)
       }
-
-      await detailsPage.close()
-      console.log(`[EsferaScraper] Detalhes coletados para ${detailsCount} lojas.`)
 
       return results
     } catch (error) {
@@ -301,6 +314,115 @@ export class EsferaScraper implements BaseScraper {
     })
 
     return results
+  }
+
+  /**
+   * Assign categories from the Esfera site combobox for new stores only.
+   */
+  private async assignCategoriesFromSite(page: Page, results: ScraperResult[], existingNames: Set<string>): Promise<void> {
+    try {
+      // Navigate back to main page
+      await page.goto(this.url, { waitUntil: 'networkidle2', timeout: 60_000 })
+      await new Promise((r) => setTimeout(r, 3000))
+
+      // Click the category combobox (select-trigger)
+      const trigger = await page.$('.select-trigger')
+      if (!trigger) {
+        console.log('[EsferaScraper] Combobox de categorias não encontrado.')
+        return
+      }
+
+      await trigger.click()
+      await new Promise((r) => setTimeout(r, 1500))
+
+      // Read category options
+      const categoryOptions = await page.evaluate(() => {
+        const options: string[] = []
+        const items = document.querySelectorAll('[role="option"], [data-value], [class*="select-item"]')
+        for (const item of items) {
+          const text = (item.textContent || '').trim()
+          if (text && text !== 'Todas as categorias' && text.length < 50) {
+            options.push(text)
+          }
+        }
+        return options
+      })
+
+      if (categoryOptions.length === 0) {
+        console.log('[EsferaScraper] Nenhuma categoria encontrada no combobox.')
+        await page.keyboard.press('Escape')
+        return
+      }
+
+      console.log(`[EsferaScraper] Categorias: ${categoryOptions.join(', ')}`)
+      await page.keyboard.press('Escape')
+      await new Promise((r) => setTimeout(r, 500))
+
+      // For each category, select it and map new stores
+      for (const categoryName of categoryOptions) {
+        try {
+          await trigger.click()
+          await new Promise((r) => setTimeout(r, 1000))
+
+          // Click the option
+          await page.evaluate((catName) => {
+            const items = document.querySelectorAll('[role="option"], [data-value], [class*="select-item"]')
+            for (const item of items) {
+              if ((item.textContent || '').trim() === catName) {
+                (item as HTMLElement).click()
+                return
+              }
+            }
+          }, categoryName)
+
+          await new Promise((r) => setTimeout(r, 2000))
+
+          // Get visible store names
+          const visibleStores = await page.evaluate(() => {
+            const names: string[] = []
+            const nameEls = document.querySelectorAll('[class*="grey-darker"]')
+            for (const el of nameEls) {
+              const text = (el.textContent || '').trim()
+              if (text && text.length >= 2 && text.length <= 100) names.push(text)
+            }
+            return names
+          })
+
+          // Assign category only to NEW stores (not already in DB)
+          for (const store of results) {
+            if (!existingNames.has(store.storeName.toLowerCase()) && !store.category) {
+              const match = visibleStores.some(v => v.toLowerCase() === store.storeName.toLowerCase())
+              if (match) {
+                store.category = categoryName
+              }
+            }
+          }
+        } catch {
+          // Skip category on error
+        }
+      }
+
+      // Reset to "Todas as categorias"
+      try {
+        await trigger.click()
+        await new Promise((r) => setTimeout(r, 1000))
+        await page.evaluate(() => {
+          const items = document.querySelectorAll('[role="option"], [data-value], [class*="select-item"]')
+          for (const item of items) {
+            if ((item.textContent || '').trim() === 'Todas as categorias') {
+              (item as HTMLElement).click()
+              return
+            }
+          }
+        })
+      } catch {}
+
+      // Count results
+      const categorized = results.filter(r => r.category && r.category !== 'Outros').length
+      console.log(`[EsferaScraper] Categorias atribuídas a ${categorized} lojas novas.`)
+    } catch (error) {
+      console.warn('[EsferaScraper] Erro ao buscar categorias:', error instanceof Error ? error.message : error)
+    }
   }
 
   /**

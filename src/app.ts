@@ -13,7 +13,7 @@ const app = express()
 app.use(cors())
 app.use(helmet())
 app.use(express.json())
-app.use(createRateLimiter())
+app.use(createRateLimiter({ windowMs: 60_000, maxRequests: 200 }))
 
 // Routes
 app.use('/api/auth', authRoutes)
